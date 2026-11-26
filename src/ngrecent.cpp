@@ -2,7 +2,7 @@
 // ngrecent:/ — what happened lately to the user's files and folders, as a folder any KDE file view can show: Dolphin NG
 // and Dialog NG list it in place of the desktop's "Recent Files". Each entry is the real file (its own URL), with the
 // time of the event as its access time, so that "sorted by last access" is the order of the events, and with what
-// happened as its comment ("Downloaded from kde.org").
+// happened as its comment ("Downloaded from kde.org"). An entry of this list carries the mark "ngrecent" in UDS_EXTRA + 7.
 #include "events.h"
 
 #include <KIO/WorkerBase>
@@ -33,6 +33,12 @@ public:
         if (!url.path().isEmpty() && url.path() != QLatin1String("/")) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }
+        KIO::UDSEntry self; // (the folder itself, as KIO expects of a listing)
+        self.reserve(3);
+        self.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
+        self.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
+        self.fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, QStringLiteral("inode/directory"));
+        listEntry(self);
         const QList<NgRecent::Event> all = NgRecent::events();
         int index = 0;
         for (const NgRecent::Event &event : all) {
@@ -112,9 +118,12 @@ private:
         }
         entry->fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, S_ISDIR(info.st_mode) ? QStringLiteral("inode/directory") : m_types.mimeTypeForFile(event.path, QMimeDatabase::MatchExtension).name());
         entry->fastInsert(KIO::UDSEntry::UDS_COMMENT, NgRecent::describe(event));
-        entry->fastInsert(KIO::UDSEntry::UDS_EXTRA, QString::number(int(event.kind)));
+        // (how a view knows an entry of this list from any other: KDE's own recentlyused:/ also fills UDS_EXTRA, with
+        // the application's name. The mark, then the kind of event and the file it was made from)
+        entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 7, QStringLiteral("ngrecent"));
+        entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 8, QString::number(int(event.kind)));
         if (!event.source.isEmpty()) {
-            entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 1, event.source);
+            entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 9, event.source);
         }
         return true;
     }

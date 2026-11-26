@@ -1,0 +1,14 @@
+{
+    "KDE-KIO-Protocols": {
+        "ngrecent": {
+            "Class": ":local",
+            "Icon": "document-open-recent",
+            "exec": "kf6/kio/ngrecent",
+            "input": "none",
+            "listing": ["Name", "Type", "Size", "Date", "AccessDate", "Access"],
+            "output": "filesystem",
+            "protocol": "ngrecent",
+            "reading": true
+        }
+    }
+}

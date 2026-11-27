@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #include "events.h"
 
+#include <QDBusArgument>
+#include <QDBusConnection>
+#include <QDBusMessage>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -61,6 +65,103 @@ void note(const QString &path, Kind kind, const QString &detail, const QString &
 
 namespace
 {
+// The applications of the desktop, to give a program its name ("gimp-3.0" is "GIMP") and to tell a browser:
+// by the id of the desktop entry and by the program it starts
+struct Application {
+    QString name;
+    bool browser = false;
+    bool hidden = false; // not shown in the menus
+};
+struct Applications {
+    QHash<QString, Application> byId;
+    QHash<QString, Application> byProgram;
+
+    Applications()
+    {
+        const QString language = QLocale().name(); // it_IT
+        const QStringList wanted{QStringLiteral("Name[") + language + QLatin1Char(']'), QStringLiteral("Name[") + language.section(QLatin1Char('_'), 0, 0) + QLatin1Char(']'),
+                                 QStringLiteral("Name")};
+        const QStringList folders = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+        for (const QString &folder : folders) {
+            QDirIterator it(folder, {QStringLiteral("*.desktop")}, QDir::Files);
+            while (it.hasNext()) {
+                QFile file(it.next());
+                if (!file.open(QIODevice::ReadOnly)) {
+                    continue;
+                }
+                QHash<QString, QString> keys;
+                bool inEntry = false;
+                while (!file.atEnd()) {
+                    const QString line = QString::fromUtf8(file.readLine()).trimmed();
+                    if (line.startsWith(QLatin1Char('['))) {
+                        inEntry = line == QLatin1String("[Desktop Entry]");
+                        continue;
+                    }
+                    const int equals = line.indexOf(QLatin1Char('='));
+                    if (inEntry && equals > 0) {
+                        keys.insert(line.left(equals).trimmed(), line.mid(equals + 1).trimmed());
+                    }
+                }
+                Application application;
+                for (const QString &key : wanted) {
+                    if (application.name.isEmpty()) {
+                        application.name = keys.value(key);
+                    }
+                }
+                if (application.name.isEmpty() || keys.value(QStringLiteral("Type"), QStringLiteral("Application")) != QLatin1String("Application")) {
+                    continue;
+                }
+                application.browser = keys.value(QStringLiteral("Categories")).split(QLatin1Char(';')).contains(QLatin1String("WebBrowser"));
+                const QString id = it.fileInfo().completeBaseName().toLower();
+                if (!byId.contains(id)) {
+                    byId.insert(id, application); // (the user's own entries come first in the list of folders)
+                }
+                // the program: the first word of Exec that is not "env" or a variable
+                const QStringList words = keys.value(QStringLiteral("Exec")).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                for (const QString &word : words) {
+                    if (word == QLatin1String("env") || (word.contains(QLatin1Char('=')) && !word.startsWith(QLatin1Char('/')))) {
+                        continue;
+                    }
+                    const QString program = word.section(QLatin1Char('/'), -1);
+                    // (several entries may start one program: one that is shown in the menus is preferred)
+                    application.hidden = keys.value(QStringLiteral("NoDisplay")) == QLatin1String("true");
+                    const auto known = byProgram.constFind(program);
+                    if (!program.isEmpty() && !program.startsWith(QLatin1Char('%')) && (known == byProgram.cend() || (known->hidden && !application.hidden))) {
+                        byProgram.insert(program, application);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    Application find(const QString &id, const QString &program) const
+    {
+        if (!id.isEmpty()) {
+            const auto it = byId.constFind(id.toLower());
+            if (it != byId.cend()) {
+                return *it;
+            }
+            // (a Snap names its entries <snap>_<application>)
+            const auto snap = byId.constFind(id.toLower() + QLatin1Char('_') + id.toLower());
+            if (snap != byId.cend()) {
+                return *snap;
+            }
+        }
+        // tools that move files about for someone else say nothing about who did it; file managers say it better
+        // themselves (Dolphin NG's own notes)
+        static const QSet<QString> nobody{QStringLiteral("sh"),    QStringLiteral("bash"),  QStringLiteral("zsh"),   QStringLiteral("fish"),    QStringLiteral("dash"),
+                                          QStringLiteral("cp"),    QStringLiteral("mv"),    QStringLiteral("touch"), QStringLiteral("mkdir"),   QStringLiteral("cat"),
+                                          QStringLiteral("tee"),   QStringLiteral("dd"),    QStringLiteral("ln"),    QStringLiteral("install"), QStringLiteral("kioworker"),
+                                          QStringLiteral("dolphin"), QStringLiteral("dolphin-ng"), QStringLiteral("ng-job")};
+        if (program.isEmpty() || nobody.contains(program)) {
+            return {};
+        }
+        const auto it = byProgram.constFind(program);
+        return it != byProgram.cend() ? *it : Application{program, false, false}; // (no entry: the program's own name)
+    }
+};
+
 struct Collector {
     qint64 since = 0;
     QHash<QString, Event> newest;
@@ -80,19 +181,37 @@ struct Collector {
         // program said it did (a journal line, a quick action) says more than what the dates of the file suggest
         const bool plain = event.kind == Opened || event.kind == Modified || event.kind == Created;
         const bool told = it->kind == Downloaded || it->kind == Made || it->kind == Added;
+        // (two sources about one moment: who did it, and where a download came from, are kept from either)
+        const bool together = qAbs(event.when - it->when) < 180000;
+        const Event before = *it;
         if (event.when >= it->when) {
-            if (plain && (told || it->kind == Created) && event.when - it->when < 180000) {
+            if (plain && (told || it->kind == Created) && together) {
+                if (it->by.isEmpty()) {
+                    it->by = event.by;
+                }
                 return;
             }
-            const Event before = *it;
             *it = event;
             if (it->folder != before.folder) {
                 it->folder = before.folder || event.folder;
             }
-        } else if (!plain && (it->kind == Opened || it->kind == Modified || it->kind == Created) && it->when - event.when < 180000) {
+        } else if (!plain && (it->kind == Opened || it->kind == Modified || it->kind == Created) && together) {
             const qint64 when = it->when;
             *it = event;
             it->when = when;
+        } else {
+            if (together && it->by.isEmpty()) {
+                it->by = event.by;
+            }
+            return;
+        }
+        if (together) {
+            if (it->by.isEmpty()) {
+                it->by = before.by;
+            }
+            if (it->kind == before.kind && it->detail.isEmpty()) {
+                it->detail = before.detail;
+            }
         }
     }
 
@@ -186,6 +305,61 @@ struct Collector {
         }
     }
 
+    // the ng-fsevents service, where it runs: the latest that happened to each file of the home, anywhere in it,
+    // and which program did it. (path, when, kinds, program, application, count); kinds: 1 created, 2 modified,
+    // 4 renamed or moved to where it is, 8 a folder, 16 a folder standing for many files changed at once
+    void service()
+    {
+        QDBusMessage call = QDBusMessage::createMethodCall(QStringLiteral("org.ng.FsEvents1"), QStringLiteral("/org/ng/FsEvents1"), QStringLiteral("org.ng.FsEvents1"),
+                                                           QStringLiteral("Events"));
+        call << qlonglong(since) << uint(2000);
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 800);
+        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
+            return; // (not installed, or not running: the list is made without it)
+        }
+        const QDBusArgument list = reply.arguments().constFirst().value<QDBusArgument>();
+        if (list.currentType() != QDBusArgument::ArrayType) {
+            return;
+        }
+        static const Applications applications;
+        list.beginArray();
+        while (!list.atEnd()) {
+            QString path, program, application;
+            qlonglong when = 0;
+            uint kinds = 0, count = 0;
+            list.beginStructure();
+            list >> path >> when >> kinds >> program >> application >> count;
+            list.endStructure();
+            const QFileInfo info(path);
+            if (!info.exists()) {
+                continue;
+            }
+            const Application app = applications.find(application, program);
+            Event event;
+            event.path = info.absoluteFilePath();
+            event.when = when;
+            event.folder = info.isDir();
+            event.by = app.name;
+            if (kinds & 16) {
+                event.kind = ManyChanged;
+                event.detail = QString::number(count);
+            } else if (kinds & 1) {
+                // a new file made by a browser is a download (where from, when the browser wrote it on the file)
+                event.kind = app.browser && !event.folder ? Downloaded : Created;
+                if (event.kind == Downloaded) {
+                    QString host = QUrl(attribute(event.path, "user.xdg.origin.url")).host();
+                    event.detail = host.startsWith(QLatin1String("www.")) ? host.mid(4) : host;
+                }
+            } else if (kinds & 4) {
+                event.kind = Added;
+            } else {
+                event.kind = Modified;
+            }
+            add(event);
+        }
+        list.endArray();
+    }
+
     // what programs wrote down themselves: time, kind, path, detail, source
     void journal()
     {
@@ -201,7 +375,7 @@ struct Collector {
             }
             const QFileInfo info(f.at(2));
             const int kind = f.at(1).toInt();
-            if (!info.exists() || kind < Created || kind > Opened) {
+            if (!info.exists() || kind < Created || kind > ManyChanged) {
                 continue;
             }
             Event event;
@@ -234,6 +408,7 @@ QList<Event> events(int days, int limit)
         collector.scan(root, 2, &budget);
     }
     collector.scan(QDir::homePath(), 1, &budget); // (the home itself: its own files and new folders, not what is in them)
+    collector.service();
     collector.opened();
     collector.journal();
     QList<Event> all = collector.newest.values();
@@ -246,19 +421,22 @@ QList<Event> events(int days, int limit)
 QString describe(const Event &event)
 {
     const QString from = event.source.isEmpty() ? QString() : QFileInfo(event.source).fileName();
+    const QString with = event.by.isEmpty() ? QString() : tr2(" with ", " con ") + event.by;
     switch (event.kind) {
     case Created:
-        return event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo");
+        return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo")) + (event.by.isEmpty() ? QString() : tr2(", made with ", ", creato con ") + event.by);
     case Added:
-        return from.isEmpty() ? tr2("Added", "Aggiunto") : tr2("Added, from ", "Aggiunto, da ") + from;
+        return (from.isEmpty() ? tr2("Added", "Aggiunto") : tr2("Added, from ", "Aggiunto, da ") + from) + with;
     case Modified:
-        return tr2("Modified", "Modificato");
+        return tr2("Modified", "Modificato") + with;
     case Downloaded:
-        return event.detail.isEmpty() ? tr2("Downloaded", "Scaricato") : tr2("Downloaded from ", "Scaricato da ") + event.detail;
+        return (event.detail.isEmpty() ? tr2("Downloaded", "Scaricato") : tr2("Downloaded from ", "Scaricato da ") + event.detail) + with;
     case Made:
         return (event.detail.isEmpty() ? tr2("Made", "Prodotto") : event.detail) + (from.isEmpty() ? QString() : tr2(", from ", ", da ") + from);
     case Opened:
         return tr2("Opened", "Aperto");
+    case ManyChanged:
+        return event.detail + tr2(" files changed", " file modificati") + with;
     }
     return QString();
 }

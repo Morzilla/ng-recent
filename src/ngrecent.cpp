@@ -71,13 +71,26 @@ public:
         if (url.path().isEmpty() || url.path() == QLatin1String("/") || isAutomatic(url)) {
             const bool italian = QLocale().language() == QLocale::Italian;
             KIO::UDSEntry entry;
-            entry.reserve(5);
+            entry.reserve(8);
             entry.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
             entry.fastInsert(KIO::UDSEntry::UDS_DISPLAY_NAME, isAutomatic(url) ? (italian ? QStringLiteral("Automatici") : QStringLiteral("Automatic"))
                                                                                : (italian ? QStringLiteral("Recenti") : QStringLiteral("Recent")));
             entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
             entry.fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, QStringLiteral("inode/directory"));
             entry.fastInsert(KIO::UDSEntry::UDS_ICON_NAME, QStringLiteral("document-open-recent"));
+            // what the list holds, in a few figures: a view asks for this to know whether to ask for the list again
+            const NgRecent::Listing listing = NgRecent::listing();
+            qint64 newest = 0, sum = 0;
+            int lines = 0;
+            for (const NgRecent::Event &event : listing.top) {
+                if (event.automatic == isAutomatic(url)) {
+                    ++lines;
+                    newest = qMax(newest, event.when);
+                    sum += event.count + qint64(event.kind);
+                }
+            }
+            entry.fastInsert(KIO::UDSEntry::UDS_MODIFICATION_TIME, newest / 1000);
+            entry.fastInsert(KIO::UDSEntry::UDS_EXTRA + 15, QStringLiteral("%1:%2:%3").arg(lines).arg(newest).arg(sum));
             statEntry(entry);
             return KIO::WorkerResult::pass();
         }
@@ -129,8 +142,11 @@ private:
 
     static QString unique(const NgRecent::Event &event, int index)
     {
-        // (two files of the same name in two folders are two entries)
-        return QStringLiteral("%1 %2").arg(index, 3, 10, QLatin1Char('0')).arg(QFileInfo(event.path).fileName());
+        // (two files of the same name in two folders are two entries. Told apart by where they are, not by their
+        // place in the list: an entry keeps its name when others come in above it, so a view that asks again
+        // has nothing to redraw but what is new)
+        Q_UNUSED(index)
+        return QStringLiteral("%1 %2").arg(qHash(event.path), 8, 16, QLatin1Char('0')).arg(QFileInfo(event.path).fileName());
     }
 
     bool fill(KIO::UDSEntry *entry, const NgRecent::Event &event, int index)
@@ -140,7 +156,7 @@ private:
             const QString name = QFileInfo(event.path).fileName();
             QUrl url(QStringLiteral("ngrecent:/op/%1").arg(event.operation));
             url.setQuery(QStringLiteral("title=") + QString::fromLatin1(QUrl::toPercentEncoding(name)));
-            entry->reserve(14);
+            entry->reserve(16);
             entry->fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("op %1").arg(event.operation));
             entry->fastInsert(KIO::UDSEntry::UDS_DISPLAY_NAME, name);
             entry->fastInsert(KIO::UDSEntry::UDS_URL, url.toString());
@@ -156,6 +172,7 @@ private:
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 8, QString::number(int(event.kind)));
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 9, event.path);
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 10, QString::number(event.count));
+            entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 14, QString::number(event.made)); // (1 new files, 2 added, 0 modified)
             if (event.automatic) {
                 entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 11, QStringLiteral("automatic"));
             }

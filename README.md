@@ -1,6 +1,6 @@
 # ng-recent
 
-**Status: a first version.**
+**Status: an early version**, in daily use by its author. The interface for other programs may still change.
 
 What happened lately to your files and folders, as a list any KDE file view can show: `ngrecent:/`.
 
@@ -8,6 +8,22 @@ KDE's "Recent Files" only knows the files an application opened. A picture just 
 a file another program made, a new folder: none of them is there, so the next "Open" dialog (a browser's upload)
 cannot offer them. This list has them. [Dolphin NG](https://github.com/Morzilla/dolphin-ng) and
 [Dialog NG](https://github.com/Morzilla/dialog-ng) show it in place of "Recent Files" when it is installed.
+
+![The list in Dolphin NG: downloaded with Firefox, modified with KWrite and Gwenview, new files](docs/recent-list.png)
+
+It comes in three parts, and only the first is needed:
+
+- **the list** (`ngrecent:/`, a KIO worker): made when asked for, nothing running;
+- **`ng-recentd`**, for other programs: it gives them the list and takes what they did to a file (D-Bus, started
+  on demand);
+- **`ng-recent-status`**, an icon in the system tray that says whether everything behind the list works.
+
+With the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) system service, the list also knows what
+programs changed anywhere in the home, and which program it was.
+
+| In Dolphin NG | In every application's Open window (Dialog NG) |
+|---|---|
+| <img src="docs/recent-list.png" width="430" alt="The recent list in Dolphin NG's details view"> | <img src="docs/recent-dialog.png" width="430" alt="The recent list in the Open window: the event and the application under each name"> |
 
 ## What it lists
 
@@ -79,7 +95,10 @@ gdbus call --session --dest org.ng.Recent1 --object-path /org/ng/Recent1 \
 
 ## The icon in the system tray
 
+<img src="docs/status-options.png" width="340" align="right" alt="The options of the tray icon: the state in words, show the icon only when something is wrong, files and folders to leave out">
+
 `ng-recent-status` starts with the Plasma session and says whether everything behind the list works: the
 ng-fsevents service runs, it can listen to this home, no changes were lost lately, how much the journals hold.
-Without the service the list still works, and the icon says what it then does not see. Its menu can keep it
-hidden unless something is wrong. It is built when KF6StatusNotifierItem is found.
+Without the service the list still works, and the icon says what it then does not see (as in the picture).
+Its options can keep it hidden unless something is wrong, and open the list of files and folders the service
+leaves out. It is built when KF6StatusNotifierItem is found.

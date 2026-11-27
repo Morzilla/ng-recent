@@ -613,7 +613,7 @@ QString describe(const Event &event)
     const QString from = event.source.isEmpty() ? QString() : QFileInfo(event.source).fileName();
     // (done on its own: "by" the program, and said so; done by hand: "with" the application)
     const QString with = event.by.isEmpty() ? (event.automatic ? tr2(", automatic", ", automatico") : QString())
-        : event.automatic ? tr2(", automatic (", ", automatico (") + event.by + QLatin1Char(')') : tr2(" with ", " con ") + event.by;
+        : event.automatic ? QString(tr2(", automatic (", ", automatico (") + event.by + QLatin1Char(')')) : QString(tr2(" with ", " con ") + event.by);
     switch (event.kind) {
     case Created:
         return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo"))

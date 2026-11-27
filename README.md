@@ -21,6 +21,7 @@ The latest event of each file and folder in the last two weeks, the latest first
 | Downloaded from *site* | the origin browsers write on a download (`user.xdg.origin.url`) |
 | *Action*, from *file* | what Dolphin NG writes on the result of a quick action |
 | Opened | KDE's and GTK's recent documents (`recently-used.xbel`) |
+| Modified with *GIMP*, Downloaded with *Firefox*, *80* files changed with *make* | the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) service, where it runs |
 
 It needs nothing running. When the list is asked for it reads the folders people keep their things in (Downloads,
 Desktop, Documents, Pictures, Videos, Music, two levels deep, and the home's own files), the desktop's recent
@@ -46,3 +47,13 @@ Needs Qt 6 and KDE Frameworks 6 (KIO, Extra CMake Modules).
 ## Licence
 
 LGPL-2.1-or-later. The build files are CC0-1.0.
+
+## With and without ng-fsevents
+
+The list needs nothing running: it is made from the dates of the files in the user's folders (two levels deep),
+what browsers and Dolphin NG write on the files, and the desktop's recent documents.
+
+Where the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) system service runs, it is asked as well (D-Bus,
+`org.ng.FsEvents1.Events`). It adds what the dates cannot tell: files changed anywhere in the home, at any depth,
+and the program that did it, named as the desktop names the application. When the service is not installed or
+does not answer, the list is the one above: nothing to configure either way.

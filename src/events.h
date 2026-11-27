@@ -6,7 +6,8 @@
 
 // What happened lately to the files and folders of the user: the list behind "Recent" in Dolphin NG and Dialog NG.
 // It needs nothing running: the user's folders are read when the list is asked for, and what Dolphin NG, the
-// desktop's recent documents and this component's journal know is added to it.
+// desktop's recent documents and this component's journal know is added to it. Where the ng-fsevents service
+// runs, it is asked too: it knows what programs did to files anywhere in the home, and which program.
 namespace NgRecent
 {
 enum Kind {
@@ -16,6 +17,7 @@ enum Kind {
     Downloaded, // detail: the site it came from
     Made, // the result of a quick action; detail: the action, source: the file it was made from
     Opened, // by an application (the desktop's recent documents)
+    ManyChanged, // a folder a program changed many files of at once; detail: how many
 };
 
 struct Event {
@@ -24,6 +26,7 @@ struct Event {
     qint64 when = 0; // milliseconds since the epoch
     QString detail;
     QString source;
+    QString by; // the application that did it ("GIMP"), when the ng-fsevents service says
     bool folder = false;
 };
 

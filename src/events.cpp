@@ -172,9 +172,19 @@ const Applications &desktopApplications()
     return applications;
 }
 
+struct Operation {
+    QString folder;
+    qint64 first = 0;
+    qint64 last = 0;
+    int count = 0;
+    uint kinds = 0;
+    QString by;
+};
+
 struct Collector {
     qint64 since = 0;
     QHash<QString, Event> newest;
+    QHash<quint64, Operation> operations;
 
     void add(const Event &event)
     {
@@ -199,6 +209,9 @@ struct Collector {
                 if (it->by.isEmpty()) {
                     it->by = event.by;
                 }
+                if (it->operation == 0) {
+                    it->operation = event.operation;
+                }
                 return;
             }
             *it = event;
@@ -213,7 +226,13 @@ struct Collector {
             if (together && it->by.isEmpty()) {
                 it->by = event.by;
             }
+            if (it->operation == 0) {
+                it->operation = event.operation;
+            }
             return;
+        }
+        if (it->operation == 0) {
+            it->operation = before.operation; // (what the service knows of the file stays, whichever line wins)
         }
         if (together) {
             if (it->by.isEmpty()) {
@@ -328,7 +347,9 @@ struct Collector {
             return; // (not installed, or not running: the list is made without it)
         }
         const QDBusArgument list = reply.arguments().constFirst().value<QDBusArgument>();
-        if (list.currentType() != QDBusArgument::ArrayType) {
+        // (the last field was a count in the service's first version, and is the operation now)
+        const bool withOperations = reply.signature() == QLatin1String("a(sxusst)");
+        if (list.currentType() != QDBusArgument::ArrayType || (!withOperations && reply.signature() != QLatin1String("a(sxussu)"))) {
             return;
         }
         const Applications &applications = desktopApplications();
@@ -337,11 +358,17 @@ struct Collector {
             QString path, program, application;
             qlonglong when = 0;
             uint kinds = 0, count = 0;
+            qulonglong operation = 0;
             list.beginStructure();
-            list >> path >> when >> kinds >> program >> application >> count;
+            list >> path >> when >> kinds >> program >> application;
+            if (withOperations) {
+                list >> operation;
+            } else {
+                list >> count;
+            }
             list.endStructure();
             const QFileInfo info(path);
-            if (!info.exists()) {
+            if (!info.exists() || (kinds & 16)) {
                 continue;
             }
             const Application app = applications.find(application, program);
@@ -350,13 +377,8 @@ struct Collector {
             event.when = when;
             event.folder = info.isDir();
             event.by = app.name;
-            if (kinds & 16) {
-                event.kind = ManyChanged;
-                event.detail = QString::number(count);
-                if (event.by.isEmpty()) {
-                    event.by = app.tool;
-                }
-            } else if (kinds & 1) {
+            event.operation = operation;
+            if (kinds & 1) {
                 // a new file made by a browser is a download (where from, when the browser wrote it on the file)
                 event.kind = app.browser && !event.folder ? Downloaded : Created;
                 if (event.kind == Downloaded) {
@@ -371,6 +393,31 @@ struct Collector {
             add(event);
         }
         list.endArray();
+        if (!withOperations) {
+            return;
+        }
+        // the things done in one go: (id, folder, first, last, how many files, kinds, program, application)
+        QDBusMessage ask = QDBusMessage::createMethodCall(QStringLiteral("org.ng.FsEvents1"), QStringLiteral("/org/ng/FsEvents1"), QStringLiteral("org.ng.FsEvents1"),
+                                                          QStringLiteral("Operations"));
+        ask << qlonglong(since) << uint(2) << uint(2000);
+        const QDBusMessage answer = QDBusConnection::systemBus().call(ask, QDBus::Block, 800);
+        if (answer.type() != QDBusMessage::ReplyMessage || answer.signature() != QLatin1String("a(tsxxuuss)")) {
+            return;
+        }
+        const QDBusArgument all = answer.arguments().constFirst().value<QDBusArgument>();
+        all.beginArray();
+        while (!all.atEnd()) {
+            qulonglong id = 0;
+            qlonglong first = 0, last = 0;
+            uint count = 0, kinds = 0;
+            QString folder, program, application;
+            all.beginStructure();
+            all >> id >> folder >> first >> last >> count >> kinds >> program >> application;
+            all.endStructure();
+            const Application app = applications.find(application, program);
+            operations.insert(id, {folder, first, last, int(count), kinds, app.name.isEmpty() ? app.tool : app.name});
+        }
+        all.endArray();
     }
 
     // what programs wrote down themselves: time, kind, path, detail, source
@@ -432,9 +479,8 @@ QString applicationOf(qint64 pid)
     return desktopApplications().find(id, program).name;
 }
 
-QList<Event> events(int days, int limit)
+static void collect(Collector &collector, int days)
 {
-    Collector collector;
     collector.since = QDateTime::currentMSecsSinceEpoch() - qint64(days) * 86400000;
     QSet<QString> roots;
     for (const QStandardPaths::StandardLocation place : {QStandardPaths::DownloadLocation, QStandardPaths::DesktopLocation, QStandardPaths::DocumentsLocation,
@@ -452,11 +498,75 @@ QList<Event> events(int days, int limit)
     collector.service();
     collector.opened();
     collector.journal();
-    QList<Event> all = collector.newest.values();
-    std::sort(all.begin(), all.end(), [](const Event &a, const Event &b) {
+}
+
+static void latestFirst(QList<Event> &list)
+{
+    std::sort(list.begin(), list.end(), [](const Event &a, const Event &b) {
         return a.when > b.when;
     });
+}
+
+QList<Event> events(int days, int limit)
+{
+    Collector collector;
+    collect(collector, days);
+    QList<Event> all = collector.newest.values();
+    latestFirst(all);
     return all.mid(0, limit);
+}
+
+Listing listing(int days, int limit, int groupFrom)
+{
+    Collector collector;
+    collect(collector, days);
+    Listing result;
+    // the operations worth one line: of several files
+    QHash<quint64, Operation> grouped;
+    for (auto it = collector.operations.cbegin(); it != collector.operations.cend(); ++it) {
+        if (it->count >= groupFrom && QFileInfo(it->folder).isDir()) {
+            grouped.insert(it.key(), *it);
+        }
+    }
+    for (const Event &event : std::as_const(collector.newest)) {
+        quint64 operation = grouped.contains(event.operation) ? event.operation : 0;
+        if (operation == 0 && event.operation == 0) {
+            // known from the dates only (the service keeps the first files of a long operation, or was not asked
+            // about this one): part of an operation when it lies in its folder and changed while it went on
+            for (auto it = grouped.cbegin(); it != grouped.cend(); ++it) {
+                const bool inside = event.path.startsWith(it->folder + QLatin1Char('/')) || event.path == it->folder;
+                if (inside && event.when >= it->first - 2000 && event.when <= it->last + 2000 && (event.kind == Created || event.kind == Modified || event.kind == Added)) {
+                    operation = it.key();
+                    break;
+                }
+            }
+        }
+        if (operation != 0) {
+            result.members[operation].append(event);
+        } else {
+            result.top.append(event);
+        }
+    }
+    for (auto it = grouped.cbegin(); it != grouped.cend(); ++it) {
+        if (!result.members.contains(it.key())) {
+            continue; // (every file of it was changed again since, or is gone: nothing to open it on)
+        }
+        Event group;
+        group.kind = ManyChanged;
+        group.path = it->folder;
+        group.folder = true;
+        group.when = it->last;
+        group.operation = it.key();
+        group.count = it->count;
+        group.made = (it->kinds & 1) ? 1 : (it->kinds & 4) ? 2 : 0;
+        group.by = it->by;
+        group.detail = QString::number(it->count);
+        result.top.append(group);
+        latestFirst(result.members[it.key()]);
+    }
+    latestFirst(result.top);
+    result.top = result.top.mid(0, limit);
+    return result;
 }
 
 QString describe(const Event &event)
@@ -476,8 +586,10 @@ QString describe(const Event &event)
         return (event.detail.isEmpty() ? tr2("Made", "Prodotto") : event.detail) + (from.isEmpty() ? QString() : tr2(", from ", ", da ") + from);
     case Opened:
         return tr2("Opened", "Aperto");
-    case ManyChanged:
-        return event.detail + tr2(" files changed", " file modificati") + with;
+    case ManyChanged: {
+        const QString number = QLocale().toString(event.count > 0 ? event.count : event.detail.toInt());
+        return number + (event.made == 1 ? tr2(" new files", " nuovi file") : event.made == 2 ? tr2(" files added", " file aggiunti") : tr2(" files changed", " file modificati")) + with;
+    }
     }
     return QString();
 }

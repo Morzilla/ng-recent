@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QString>
 
@@ -17,7 +18,7 @@ enum Kind {
     Downloaded, // detail: the site it came from
     Made, // the result of a quick action; detail: the action, source: the file it was made from
     Opened, // by an application (the desktop's recent documents)
-    ManyChanged, // a folder a program changed many files of at once; detail: how many
+    ManyChanged, // things done in one go (an archive unpacked, a synchronisation): one line that opens on its files
 };
 
 struct Event {
@@ -28,10 +29,24 @@ struct Event {
     QString source;
     QString by; // the application that did it ("GIMP"), when the ng-fsevents service says
     bool folder = false;
+    quint64 operation = 0; // what it was part of (ng-fsevents); for ManyChanged: the operation itself
+    int count = 0; // ManyChanged: how many files
+    int made = 0; // ManyChanged: 1 new files, 2 files moved or copied there, 0 files modified
 };
 
 /** the newest event of each file and folder, the latest first; \a days back, at most \a limit */
 QList<Event> events(int days = 14, int limit = 300);
+
+/**
+ * The list as a view shows it: files changed a few at a time are lines of their own; the files of one operation
+ * of \a groupFrom files or more (ng-fsevents tells which were changed in one go) are behind one line, a
+ * ManyChanged event whose path is the folder they have in common.
+ */
+struct Listing {
+    QList<Event> top; // the latest first
+    QHash<quint64, QList<Event>> members; // operation -> its files, the latest first
+};
+Listing listing(int days = 14, int limit = 300, int groupFrom = 4);
 
 /** what the list says under a name: "Downloaded from kde.org", "Convert to MP4, from talk.mkv" */
 QString describe(const Event &event);

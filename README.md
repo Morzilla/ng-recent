@@ -37,7 +37,7 @@ The latest event of each file and folder in the last two weeks, the latest first
 | Downloaded from *site* | the origin browsers write on a download (`user.xdg.origin.url`) |
 | *Action*, from *file* | what Dolphin NG writes on the result of a quick action |
 | Opened | KDE's and GTK's recent documents (`recently-used.xbel`) |
-| Modified with *GIMP*, Downloaded with *Firefox*, *80* files changed with *make* | the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) service, where it runs |
+| Modified with *GIMP*, Downloaded with *Firefox*, *1,248* new files with *Ark* (one line that opens) | the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) service, where it runs |
 
 It needs nothing running. When the list is asked for it reads the folders people keep their things in (Downloads,
 Desktop, Documents, Pictures, Videos, Music, two levels deep, and the home's own files), the desktop's recent
@@ -63,6 +63,13 @@ Needs Qt 6 and KDE Frameworks 6 (KIO, Extra CMake Modules).
 ## Licence
 
 LGPL-2.1-or-later. The build files are CC0-1.0.
+
+## Things done in one go
+
+Unpacking an archive or a synchronisation changes hundreds of files: as lines of their own they would bury
+everything else. ng-fsevents tells which files were changed in one go (by one application, one after the other),
+and the list shows such an operation of 4 files or more as **one line that opens like a folder** on its files
+(`ngrecent:/op/<id>`): "1,248 new files with Ark". Files changed a few at a time stay lines of their own.
 
 ## With and without ng-fsevents
 

@@ -36,7 +36,7 @@ public:
         // itself has what the user did
         const quint64 operation = operationOf(url);
         const bool automatic = isAutomatic(url);
-        if (!url.path().isEmpty() && url.path() != QLatin1String("/") && operation == 0 && !automatic) {
+        if (!url.path().isEmpty() && url.path() != QLatin1String("/") && operation == 0 && !automatic && !isEverything(url)) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }
         // ("?opened=1": with what was only opened, whatever the setting; a view's "Opened" filter asks so)
@@ -61,7 +61,7 @@ public:
         int index = 0;
         for (const NgRecent::Event &event : all) {
             KIO::UDSEntry entry;
-            if ((operation != 0 || event.automatic == automatic) && fill(&entry, event, index)) {
+            if ((operation != 0 || isEverything(url) || event.automatic == automatic) && fill(&entry, event, index)) {
                 listEntry(entry);
             }
             ++index;
@@ -71,7 +71,7 @@ public:
 
     KIO::WorkerResult stat(const QUrl &url) override
     {
-        if (url.path().isEmpty() || url.path() == QLatin1String("/") || isAutomatic(url)) {
+        if (url.path().isEmpty() || url.path() == QLatin1String("/") || isAutomatic(url) || isEverything(url)) {
             const bool italian = QLocale().language() == QLocale::Italian;
             KIO::UDSEntry entry;
             entry.reserve(8);
@@ -86,7 +86,7 @@ public:
             qint64 newest = 0, sum = 0;
             int lines = 0;
             for (const NgRecent::Event &event : listing.top) {
-                if (event.automatic == isAutomatic(url)) {
+                if (isEverything(url) || event.automatic == isAutomatic(url)) {
                     ++lines;
                     newest = qMax(newest, event.when);
                     sum += event.count + qint64(event.kind);
@@ -124,7 +124,7 @@ public:
 
     KIO::WorkerResult mimetype(const QUrl &url) override
     {
-        if (url.path().isEmpty() || url.path() == QLatin1String("/") || operationOf(url) != 0 || isAutomatic(url)) {
+        if (url.path().isEmpty() || url.path() == QLatin1String("/") || operationOf(url) != 0 || isAutomatic(url) || isEverything(url)) {
             mimeType(QStringLiteral("inode/directory"));
             return KIO::WorkerResult::pass();
         }
@@ -135,6 +135,12 @@ private:
     static bool isAutomatic(const QUrl &url)
     {
         return url.path() == QLatin1String("/automatic") || url.path() == QLatin1String("/automatic/");
+    }
+
+    // "/all": what the user did and what was done on its own, together
+    static bool isEverything(const QUrl &url)
+    {
+        return url.path() == QLatin1String("/all") || url.path() == QLatin1String("/all/");
     }
 
     static quint64 operationOf(const QUrl &url)

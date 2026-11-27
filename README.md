@@ -78,7 +78,7 @@ so do a few files changed at the same moment in different folders: one line is f
 ng-fsevents says which changes were made by things that work on their own: a synchronisation, an updater, a
 timer (a process in a systemd service), or the desktop's own background programs. They are not in the list,
 which is about what you did; they have a list of their own, `ngrecent:/automatic`, where each line names the
-program: "Modified, automatic (onedrive)". Dolphin NG shows the two as "Yours" and "Automatic" among the
+program: "Modified, automatic (onedrive)" (`ngrecent:/all` has both). Dolphin NG shows the two as "Yours" and "Automatic" among the
 filters of its sidebar.
 
 ## With and without ng-fsevents

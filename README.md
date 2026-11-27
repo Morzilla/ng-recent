@@ -69,7 +69,9 @@ LGPL-2.1-or-later. The build files are CC0-1.0.
 Unpacking an archive or a synchronisation changes hundreds of files: as lines of their own they would bury
 everything else. ng-fsevents tells which files were changed in one go (by one application, one after the other),
 and the list shows such an operation of 4 files or more as **one line that opens like a folder** on its files
-(`ngrecent:/op/<id>`): "1,248 new files with Ark". Files changed a few at a time stay lines of their own.
+(`ngrecent:/op/<id>`): "1,248 new files with Ark". Files changed a few at a time stay lines of their own, and
+so do a few files changed at the same moment in different folders: one line is for files that belong together
+(all in one folder, or in a folder the operation made, or 20 and more).
 
 ## With and without ng-fsevents
 

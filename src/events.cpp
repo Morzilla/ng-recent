@@ -565,6 +565,24 @@ Listing listing(int days, int limit, int groupFrom)
         if (!result.members.contains(it.key())) {
             continue; // (every file of it was changed again since, or is gone: nothing to open it on)
         }
+        // One line when the files belong together: all in one folder, or in a folder the operation itself made
+        // (an archive unpacked, a folder copied), or so many that nothing else can be meant (a synchronisation).
+        // A few files changed at the same time in different folders have only the moment in common: they stay
+        // lines of their own
+        const QList<Event> members = result.members.value(it.key());
+        QSet<QString> folders;
+        bool madeTheFolder = false;
+        for (const Event &member : members) {
+            if (member.folder) {
+                madeTheFolder |= member.path == it->folder && member.kind == Created;
+            } else {
+                folders.insert(member.path.left(member.path.lastIndexOf(QLatin1Char('/'))));
+            }
+        }
+        if (folders.size() > 1 && !madeTheFolder && it->count < 20) {
+            result.top += result.members.take(it.key());
+            continue;
+        }
         Event group;
         group.kind = ManyChanged;
         group.path = it->folder;

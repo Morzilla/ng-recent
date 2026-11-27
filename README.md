@@ -36,7 +36,7 @@ The latest event of each file and folder in the last two weeks, the latest first
 | Modified | changed after it was made |
 | Downloaded from *site* | the origin browsers write on a download (`user.xdg.origin.url`) |
 | *Action*, from *file* | what Dolphin NG writes on the result of a quick action |
-| Opened | KDE's and GTK's recent documents (`recently-used.xbel`) |
+| Opened | KDE's and GTK's recent documents (`recently-used.xbel`). Left out unless asked for: `ShowOpened=true` in `~/.config/ng-recent/list.conf`, or the tray icon's options |
 | Modified with *GIMP*, Downloaded with *Firefox*, *1,248* new files with *Ark* (one line that opens) | the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) service, where it runs |
 
 It needs nothing running. When the list is asked for it reads the folders people keep their things in (Downloads,

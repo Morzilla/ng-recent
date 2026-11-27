@@ -161,6 +161,10 @@ int main(int argc, char **argv)
         auto *onlyProblems = new QCheckBox(tr2("Show the icon only when something is wrong", "Mostra l'icona solo se qualcosa non va"));
         onlyProblems->setChecked(quiet);
         layout->addWidget(onlyProblems);
+        QSettings listSettings(QStringLiteral("ng-recent"), QStringLiteral("list"));
+        auto *showOpened = new QCheckBox(tr2("List the files that were only opened too", "Elenca anche i file soltanto aperti"));
+        showOpened->setChecked(listSettings.value(QStringLiteral("ShowOpened"), false).toBool());
+        layout->addWidget(showOpened);
         // what the file change service leaves out for this user: a text file, opened in the editor
         auto *exclusions = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")), tr2("Files and folders to leave out…", "File e cartelle da escludere…"));
         layout->addWidget(exclusions, 0, Qt::AlignLeft);
@@ -189,7 +193,8 @@ int main(int argc, char **argv)
             QDesktopServices::openUrl(QUrl::fromLocalFile(file.fileName()));
         });
         QObject::connect(buttons, &QDialogButtonBox::rejected, options, &QDialog::reject);
-        QObject::connect(buttons, &QDialogButtonBox::accepted, options, [&, onlyProblems] {
+        QObject::connect(buttons, &QDialogButtonBox::accepted, options, [&, onlyProblems, showOpened] {
+            QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).setValue(QStringLiteral("ShowOpened"), showOpened->isChecked());
             quiet = onlyProblems->isChecked();
             settings.setValue(QStringLiteral("OnlyProblems"), quiet);
             options->accept();

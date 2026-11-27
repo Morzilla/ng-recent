@@ -13,6 +13,7 @@
 #include <QLocale>
 #include <QRegularExpression>
 #include <QSet>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QXmlStreamReader>
@@ -189,6 +190,7 @@ struct Collector {
     qint64 since = 0;
     QHash<QString, Event> newest;
     QHash<quint64, Operation> operations;
+    bool showOpened = false;
 
     void add(const Event &event)
     {
@@ -447,6 +449,9 @@ struct Collector {
             event.kind = Kind(kind);
             event.path = info.absoluteFilePath();
             event.folder = info.isDir();
+            if (event.kind == Opened && !showOpened) {
+                continue;
+            }
             event.detail = f.value(3);
             event.source = f.value(4);
             event.by = f.value(5);
@@ -500,7 +505,12 @@ static void collect(Collector &collector, int days)
     }
     collector.scan(QDir::homePath(), 1, &budget); // (the home itself: its own files and new folders, not what is in them)
     collector.service();
-    collector.opened();
+    // (what was only opened is left out unless asked for: the list is about what was made and what changed, and
+    // every picture looked at would be a line. ~/.config/ng-recent/list.conf, ShowOpened=true)
+    collector.showOpened = QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("ShowOpened"), false).toBool();
+    if (collector.showOpened) {
+        collector.opened();
+    }
     collector.journal();
 }
 

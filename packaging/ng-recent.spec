@@ -17,6 +17,7 @@ BuildRequires:  gcc-c++
 BuildRequires:  kf6-rpm-macros
 BuildRequires:  qt6-qtbase-devel
 BuildRequires:  cmake(KF6KIO)
+BuildRequires:  cmake(KF6StatusNotifierItem)
 
 %description
 KDE's "Recent Files" only knows the files an application opened. ng-recent
@@ -39,6 +40,10 @@ Dialog NG show it in place of "Recent Files" when it is installed.
 %license LICENSES/LGPL-2.1-or-later.txt LICENSES/CC0-1.0.txt
 %doc README.md
 %{_bindir}/ng-recent-list
+%{_bindir}/ng-recentd
+%{_bindir}/ng-recent-status
+%{_datadir}/dbus-1/services/org.ng.Recent1.service
+%{_sysconfdir}/xdg/autostart/ng-recent-status.desktop
 %{_kf6_plugindir}/kio/ngrecent.so
 
 %changelog

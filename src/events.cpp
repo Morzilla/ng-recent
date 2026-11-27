@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QLocale>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -38,7 +39,7 @@ QString journalPath()
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/ng-recent/journal.tsv");
 }
 
-void note(const QString &path, Kind kind, const QString &detail, const QString &source)
+void note(const QString &path, Kind kind, const QString &detail, const QString &source, const QString &by)
 {
     const QString file = journalPath();
     QDir().mkpath(QFileInfo(file).absolutePath());
@@ -59,7 +60,7 @@ void note(const QString &path, Kind kind, const QString &detail, const QString &
     auto clean = [](QString text) {
         return text.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
     };
-    const QStringList fields{QString::number(QDateTime::currentMSecsSinceEpoch()), QString::number(int(kind)), clean(path), clean(detail), clean(source)};
+    const QStringList fields{QString::number(QDateTime::currentMSecsSinceEpoch()), QString::number(int(kind)), clean(path), clean(detail), clean(source), clean(by)};
     journal.write(fields.join(QLatin1Char('\t')).toUtf8() + '\n');
 }
 
@@ -161,6 +162,12 @@ struct Applications {
         return it != byProgram.cend() ? *it : Application{program, false, false}; // (no entry: the program's own name)
     }
 };
+
+const Applications &desktopApplications()
+{
+    static const Applications applications;
+    return applications;
+}
 
 struct Collector {
     qint64 since = 0;
@@ -321,7 +328,7 @@ struct Collector {
         if (list.currentType() != QDBusArgument::ArrayType) {
             return;
         }
-        static const Applications applications;
+        const Applications &applications = desktopApplications();
         list.beginArray();
         while (!list.atEnd()) {
             QString path, program, application;
@@ -385,10 +392,38 @@ struct Collector {
             event.folder = info.isDir();
             event.detail = f.value(3);
             event.source = f.value(4);
+            event.by = f.value(5);
             add(event);
         }
     }
 };
+}
+
+QString applicationOf(qint64 pid)
+{
+    // the program: the first argument the process was started with, without its folder
+    QString program;
+    QFile cmdline(QStringLiteral("/proc/%1/cmdline").arg(pid));
+    if (cmdline.open(QIODevice::ReadOnly)) {
+        QByteArray first = cmdline.read(4096);
+        first.truncate(qMax<qsizetype>(0, first.indexOf('\0')));
+        program = QFile::decodeName(first).section(QLatin1Char(' '), 0, 0).section(QLatin1Char('/'), -1);
+    }
+    // the application: from the name of its systemd scope or service (app-org.kde.kate-1a2b.scope,
+    // app-org.kde.kate@1a2b.service, app-flatpak-org.gimp.GIMP-123.scope, snap.firefox.firefox-<uuid>.scope)
+    QString id;
+    QFile cgroup(QStringLiteral("/proc/%1/cgroup").arg(pid));
+    if (cgroup.open(QIODevice::ReadOnly)) {
+        const QString unit = QString::fromUtf8(cgroup.read(4096)).trimmed().section(QLatin1Char('/'), -1);
+        static const QRegularExpression app(QStringLiteral("^app-(?:flatpak-|gnome-)?(.+?)(?:-[0-9a-f]+|@[^.]*)?\\.(?:scope|service)$"));
+        static const QRegularExpression snap(QStringLiteral("^snap\\.([^.]+)\\."));
+        if (const auto match = app.match(unit); match.hasMatch()) {
+            id = match.captured(1);
+        } else if (const auto snapMatch = snap.match(unit); snapMatch.hasMatch()) {
+            id = snapMatch.captured(1);
+        }
+    }
+    return desktopApplications().find(id, program).name;
 }
 
 QList<Event> events(int days, int limit)

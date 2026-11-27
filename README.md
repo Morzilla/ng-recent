@@ -57,3 +57,29 @@ Where the [ng-fsevents](https://github.com/Morzilla/ng-fsevents) system service 
 `org.ng.FsEvents1.Events`). It adds what the dates cannot tell: files changed anywhere in the home, at any depth,
 and the program that did it, named as the desktop names the application. When the service is not installed or
 does not answer, the list is the one above: nothing to configure either way.
+
+## For other programs: `org.ng.Recent1`
+
+`ng-recentd` gives the same list to any program and takes what programs want to tell, on the session bus
+(object `/org/ng/Recent1`). The bus starts it when it is called and it leaves after a minute with nothing to
+do. What it is told is written to the journal at once (`~/.local/share/ng-recent/journal.tsv`, at most 400 KiB:
+past that the older half goes), so nothing is lost while it, or the file manager, is not running. The list is
+never emptied by reading it: every reader gets all of it.
+
+| Member | |
+|---|---|
+| `Note(s path, s kind, s detail, s source)` | the calling program did something to `path`. `kind`: `created`, `added`, `modified`, `downloaded` (`detail`: the site), `made` (`detail`: what made it, `source`: the file it was made from), `opened`. The caller's application is found out by the service and kept with the note |
+| `Events(i days, u limit) → a(sxssssbs)` | the list: path, when (ms), kind, detail, source, application, is a folder, the event in words in the user's language |
+| signal `Changed()` | a program told something (only while the service runs) |
+
+```sh
+gdbus call --session --dest org.ng.Recent1 --object-path /org/ng/Recent1 \
+    --method org.ng.Recent1.Note "$HOME/Videos/talk.mp4" made "Convert to MP4" "$HOME/Videos/talk.mkv"
+```
+
+## The icon in the system tray
+
+`ng-recent-status` starts with the Plasma session and says whether everything behind the list works: the
+ng-fsevents service runs, it can listen to this home, no changes were lost lately, how much the journals hold.
+Without the service the list still works, and the icon says what it then does not see. Its menu can keep it
+hidden unless something is wrong. It is built when KF6StatusNotifierItem is found.

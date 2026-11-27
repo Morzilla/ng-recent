@@ -36,7 +36,12 @@ QList<Event> events(int days = 14, int limit = 300);
 /** what the list says under a name: "Downloaded from kde.org", "Convert to MP4, from talk.mkv" */
 QString describe(const Event &event);
 
-/** one line more in the journal (for programs that know what they did: Dolphin NG) */
-void note(const QString &path, Kind kind, const QString &detail = QString(), const QString &source = QString());
+/** one line more in the journal (for programs that know what they did: Dolphin NG, or any program through
+ *  ng-recentd's Note); \a by: the application that did it, as people call it */
+void note(const QString &path, Kind kind, const QString &detail = QString(), const QString &source = QString(), const QString &by = QString());
+
+/** the name of the application process \a pid belongs to ("GIMP"), or of its program; empty for shells and the
+ *  like, which act for someone else */
+QString applicationOf(qint64 pid);
 QString journalPath();
 }

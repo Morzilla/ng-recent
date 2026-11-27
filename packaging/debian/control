@@ -6,6 +6,7 @@ Build-Depends: debhelper-compat (= 13),
                cmake,
                extra-cmake-modules,
                libkf6kio-dev,
+               libkf6statusnotifieritem-dev,
                qt6-base-dev
 Standards-Version: 4.7.0
 Homepage: https://github.com/Morzilla/ng-recent

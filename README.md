@@ -73,6 +73,14 @@ and the list shows such an operation of 4 files or more as **one line that opens
 so do a few files changed at the same moment in different folders: one line is for files that belong together
 (all in one folder, or in a folder the operation made, or 20 and more).
 
+## By hand or on its own
+
+ng-fsevents says which changes were made by things that work on their own: a synchronisation, an updater, a
+timer (a process in a systemd service), or the desktop's own background programs. They are not in the list,
+which is about what you did; they have a list of their own, `ngrecent:/automatic`, where each line names the
+program: "Modified, automatic (onedrive)". Dolphin NG shows the two as "Yours" and "Automatic" among the
+filters of its sidebar.
+
 ## With and without ng-fsevents
 
 The list needs nothing running: it is made from the dates of the files in the user's folders (two levels deep),

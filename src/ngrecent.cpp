@@ -31,38 +31,50 @@ public:
     KIO::WorkerResult listDir(const QUrl &url) override
     {
         // "/": the list; "/op/<id>": the files of one operation (a line of the list that opens like a folder)
+        // "/automatic": what was done by things that work on their own (a synchronisation, an updater); the list
+        // itself has what the user did
         const quint64 operation = operationOf(url);
-        if (!url.path().isEmpty() && url.path() != QLatin1String("/") && operation == 0) {
+        const bool automatic = isAutomatic(url);
+        if (!url.path().isEmpty() && url.path() != QLatin1String("/") && operation == 0 && !automatic) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }
-        KIO::UDSEntry self; // (the folder itself, as KIO expects of a listing)
-        self.reserve(3);
-        self.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
-        self.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
-        self.fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, QStringLiteral("inode/directory"));
-        listEntry(self);
         const NgRecent::Listing listing = NgRecent::listing();
         if (operation != 0 && !listing.members.contains(operation)) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }
+        int byHand = 0, onItsOwn = 0;
+        for (const NgRecent::Event &event : listing.top) {
+            ++(event.automatic ? onItsOwn : byHand);
+        }
+        KIO::UDSEntry self; // (the folder itself, as KIO expects of a listing; with how many lines each of the two lists has)
+        self.reserve(5);
+        self.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
+        self.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
+        self.fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, QStringLiteral("inode/directory"));
+        self.fastInsert(KIO::UDSEntry::UDS_EXTRA + 12, QString::number(byHand));
+        self.fastInsert(KIO::UDSEntry::UDS_EXTRA + 13, QString::number(onItsOwn));
+        listEntry(self);
         const QList<NgRecent::Event> all = operation != 0 ? listing.members.value(operation) : listing.top;
         int index = 0;
         for (const NgRecent::Event &event : all) {
             KIO::UDSEntry entry;
-            if (fill(&entry, event, index++)) {
+            if ((operation != 0 || event.automatic == automatic) && fill(&entry, event, index)) {
                 listEntry(entry);
             }
+            ++index;
         }
         return KIO::WorkerResult::pass();
     }
 
     KIO::WorkerResult stat(const QUrl &url) override
     {
-        if (url.path().isEmpty() || url.path() == QLatin1String("/")) {
+        if (url.path().isEmpty() || url.path() == QLatin1String("/") || isAutomatic(url)) {
+            const bool italian = QLocale().language() == QLocale::Italian;
             KIO::UDSEntry entry;
             entry.reserve(5);
             entry.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
-            entry.fastInsert(KIO::UDSEntry::UDS_DISPLAY_NAME, QLocale().language() == QLocale::Italian ? QStringLiteral("Recenti") : QStringLiteral("Recent"));
+            entry.fastInsert(KIO::UDSEntry::UDS_DISPLAY_NAME, isAutomatic(url) ? (italian ? QStringLiteral("Automatici") : QStringLiteral("Automatic"))
+                                                                               : (italian ? QStringLiteral("Recenti") : QStringLiteral("Recent")));
             entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
             entry.fastInsert(KIO::UDSEntry::UDS_MIME_TYPE, QStringLiteral("inode/directory"));
             entry.fastInsert(KIO::UDSEntry::UDS_ICON_NAME, QStringLiteral("document-open-recent"));
@@ -96,7 +108,7 @@ public:
 
     KIO::WorkerResult mimetype(const QUrl &url) override
     {
-        if (url.path().isEmpty() || url.path() == QLatin1String("/") || operationOf(url) != 0) {
+        if (url.path().isEmpty() || url.path() == QLatin1String("/") || operationOf(url) != 0 || isAutomatic(url)) {
             mimeType(QStringLiteral("inode/directory"));
             return KIO::WorkerResult::pass();
         }
@@ -104,6 +116,11 @@ public:
     }
 
 private:
+    static bool isAutomatic(const QUrl &url)
+    {
+        return url.path() == QLatin1String("/automatic") || url.path() == QLatin1String("/automatic/");
+    }
+
     static quint64 operationOf(const QUrl &url)
     {
         const QString path = url.path();

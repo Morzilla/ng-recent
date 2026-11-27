@@ -53,8 +53,8 @@ Listing listing(int days = 14, int limit = 300, int groupFrom = 4, bool withOpen
 QString describe(const Event &event);
 
 /** one line more in the journal (for programs that know what they did: Dolphin NG, or any program through
- *  ng-recentd's Note); \a by: the application that did it, as people call it */
-void note(const QString &path, Kind kind, const QString &detail = QString(), const QString &source = QString(), const QString &by = QString());
+ *  ng-recentd's Note); \a by: the application that did it, as people call it. False when it could not be written */
+bool note(const QString &path, Kind kind, const QString &detail = QString(), const QString &source = QString(), const QString &by = QString());
 
 /** the name of the application process \a pid belongs to ("GIMP"), or of its program; empty for shells and the
  *  like, which act for someone else */

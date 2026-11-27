@@ -40,7 +40,7 @@ QString journalPath()
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/ng-recent/journal.tsv");
 }
 
-void note(const QString &path, Kind kind, const QString &detail, const QString &source, const QString &by)
+bool note(const QString &path, Kind kind, const QString &detail, const QString &source, const QString &by)
 {
     const QString file = journalPath();
     QDir().mkpath(QFileInfo(file).absolutePath());
@@ -56,13 +56,14 @@ void note(const QString &path, Kind kind, const QString &detail, const QString &
         }
     }
     if (!journal.open(QIODevice::WriteOnly | QIODevice::Append)) {
-        return;
+        return false;
     }
     auto clean = [](QString text) {
         return text.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
     };
     const QStringList fields{QString::number(QDateTime::currentMSecsSinceEpoch()), QString::number(int(kind)), clean(path), clean(detail), clean(source), clean(by)};
-    journal.write(fields.join(QLatin1Char('\t')).toUtf8() + '\n');
+    const QByteArray line = fields.join(QLatin1Char('\t')).toUtf8() + '\n';
+    return journal.write(line) == line.size() && journal.flush();
 }
 
 namespace
@@ -211,14 +212,24 @@ struct Collector {
         // (two sources about one moment: who did it, and where a download came from, are kept from either)
         const bool together = qAbs(event.when - it->when) < 180000;
         const Event before = *it;
+        // what the service knows of the same moment stays with the line that is kept, whichever it is: who did it,
+        // whether it was done on its own, which operation it was part of. Only of the same moment: a note made a
+        // day later is not part of that operation
+        const auto keep = [together](Event &kept, const Event &other) {
+            if (!together) {
+                return;
+            }
+            if (kept.by.isEmpty()) {
+                kept.by = other.by;
+            }
+            if (kept.operation == 0) {
+                kept.operation = other.operation;
+            }
+            kept.automatic = kept.automatic || other.automatic;
+        };
         if (event.when >= it->when) {
             if (plain && (told || it->kind == Created) && together) {
-                if (it->by.isEmpty()) {
-                    it->by = event.by;
-                }
-                if (it->operation == 0) {
-                    it->operation = event.operation;
-                }
+                keep(*it, event);
                 return;
             }
             *it = event;
@@ -230,24 +241,12 @@ struct Collector {
             *it = event;
             it->when = when;
         } else {
-            if (together && it->by.isEmpty()) {
-                it->by = event.by;
-            }
-            if (it->operation == 0) {
-                it->operation = event.operation;
-            }
+            keep(*it, event);
             return;
         }
-        if (it->operation == 0) {
-            it->operation = before.operation; // (what the service knows of the file stays, whichever line wins)
-        }
-        if (together) {
-            if (it->by.isEmpty()) {
-                it->by = before.by;
-            }
-            if (it->kind == before.kind && it->detail.isEmpty()) {
-                it->detail = before.detail;
-            }
+        keep(*it, before);
+        if (together && it->kind == before.kind && it->detail.isEmpty()) {
+            it->detail = before.detail;
         }
     }
 
@@ -375,7 +374,9 @@ struct Collector {
             }
             list.endStructure();
             const QFileInfo info(path);
-            if (!info.exists() || (kinds & 16)) {
+            // (a folder standing for many files: the service's first version says it so, and that line is kept;
+            // the later ones give the operations apart, below)
+            if (!info.exists() || ((kinds & 16) && withOperations)) {
                 continue;
             }
             const Application app = applications.find(application, program);
@@ -389,7 +390,14 @@ struct Collector {
             if (event.automatic && event.by.isEmpty()) {
                 event.by = app.tool; // (what works on its own is named, application or not: "onedrive")
             }
-            if (kinds & 1) {
+            if (kinds & 16) {
+                event.kind = ManyChanged;
+                event.count = int(count);
+                event.detail = QString::number(count);
+                if (event.by.isEmpty()) {
+                    event.by = app.tool;
+                }
+            } else if (kinds & 1) {
                 // a new file made by a browser is a download (where from, when the browser wrote it on the file)
                 event.kind = app.browser && !event.folder ? Downloaded : Created;
                 if (event.kind == Downloaded) {
@@ -613,8 +621,19 @@ Listing listing(int days, int limit, int groupFrom, bool withOpened)
         result.top.append(group);
         latestFirst(result.members[it.key()]);
     }
+    // at most that many of what the user did and as many of what was done on its own: the two are lists apart,
+    // and a busy synchronisation is not to push everything else out
     latestFirst(result.top);
-    result.top = result.top.mid(0, limit);
+    QList<Event> kept;
+    int byHand = 0, onItsOwn = 0;
+    for (const Event &event : std::as_const(result.top)) {
+        int &count = event.automatic ? onItsOwn : byHand;
+        if (count < limit) {
+            ++count;
+            kept.append(event);
+        }
+    }
+    result.top = kept;
     return result;
 }
 

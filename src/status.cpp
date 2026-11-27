@@ -99,6 +99,19 @@ State look()
 }
 }
 
+class Remote : public QObject
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.ng.RecentStatus")
+public Q_SLOTS:
+    void ShowOptions()
+    {
+        Q_EMIT optionsWanted();
+    }
+Q_SIGNALS:
+    void optionsWanted();
+};
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
@@ -106,6 +119,12 @@ int main(int argc, char **argv)
     QApplication::setQuitOnLastWindowClosed(false);
     // one per session
     if (!QDBusConnection::sessionBus().registerService(QStringLiteral("org.ng.RecentStatus"))) {
+        // (the icon is there already: asked to show its options, it is told so)
+        if (QCoreApplication::arguments().contains(QStringLiteral("--options"))) {
+            QDBusConnection::sessionBus().call(QDBusMessage::createMethodCall(QStringLiteral("org.ng.RecentStatus"), QStringLiteral("/Status"),
+                                                                              QStringLiteral("org.ng.RecentStatus"), QStringLiteral("ShowOptions")),
+                                               QDBus::Block, 2000);
+        }
         return 0;
     }
 
@@ -218,8 +237,14 @@ int main(int argc, char **argv)
     QObject::connect(&timer, &QTimer::timeout, &app, refresh);
     timer.start(5 * 60 * 1000);
     refresh();
+    // "ng-recent-status --options" started again reaches the icon that is there through this
+    Remote remote;
+    QObject::connect(&remote, &Remote::optionsWanted, optionsAction, &QAction::trigger);
+    QDBusConnection::sessionBus().registerObject(QStringLiteral("/Status"), &remote, QDBusConnection::ExportAllSlots);
     if (app.arguments().contains(QStringLiteral("--options"))) {
         QTimer::singleShot(0, optionsAction, &QAction::trigger); // (the options at once: for a settings page to call)
     }
     return app.exec();
 }
+
+#include "status.moc"

@@ -85,7 +85,10 @@ public Q_SLOTS:
             return;
         }
         const auto pid = connection().interface()->servicePid(message().service());
-        NgRecent::note(info.absoluteFilePath(), NgRecent::Kind(index), detail, source, pid.isValid() ? NgRecent::applicationOf(pid.value()) : QString());
+        if (!NgRecent::note(info.absoluteFilePath(), NgRecent::Kind(index), detail, source, pid.isValid() ? NgRecent::applicationOf(pid.value()) : QString())) {
+            sendErrorReply(QDBusError::Failed, QStringLiteral("the note could not be written to ") + NgRecent::journalPath());
+            return;
+        }
         Q_EMIT Changed();
     }
 

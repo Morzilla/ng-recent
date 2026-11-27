@@ -1,0 +1,38 @@
+# CodeRabbit: automatic review of pull requests (https://docs.coderabbit.ai/reference/configuration)
+language: en-US
+tone_instructions: "Plain, direct English. Point at real defects first; skip praise and style nits that do not matter."
+reviews:
+  profile: chill
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    # (stacked pull requests too: a branch on top of another one is reviewed like one on main)
+    base_branches:
+      - ".*"
+  path_filters:
+    - "!LICENSES/**"
+    - "!build*/**"
+    - "!docs/*.png"
+  path_instructions:
+    - path: "src/**"
+      instructions: |
+        ng-recent lists what happened lately to the user's files: a KIO worker (ngrecent:/), a session D-Bus service
+        started on demand (ng-recentd, org.ng.Recent1) and a tray icon. Qt 6, KIO; events.cpp is also built without
+        KDE (ng-recent-list). Look first for:
+        - the list is made every time it is asked for, for a file dialog that must open at once: no unbounded scan,
+          no D-Bus call without a short timeout; the list must still be made when ng-fsevents is not installed, does
+          not answer, or is an older version.
+        - how events about one file from several sources merge (Collector::add): which line wins, and what it keeps
+          from the other. An operation's files belong behind its line and nowhere else; what was done on its own
+          (automatic) is a list apart.
+        - what the worker puts in UDSEntry fields is an interface Dolphin NG and Dialog NG read (UDS_EXTRA + 7 to
+          + 15): a change of meaning there breaks them.
+        - user-visible text goes through tr2("English", "Italiano"): both present and saying the same thing.
+        - ng-recentd takes notes from any program of the session: validate what it is given, and never report a note
+          as kept when it was not written.
+    - path: "packaging/**"
+      instructions: |
+        Fedora spec (COPR) and Debian packaging (Launchpad PPA): keep the two consistent, and the file lists in step
+        with what CMake installs.

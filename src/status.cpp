@@ -11,6 +11,18 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
+#include <QLabel>
+#include <QPointer>
+#include <QPushButton>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QVBoxLayout>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusMessage>
@@ -105,15 +117,13 @@ int main(int argc, char **argv)
 
     QSettings settings(QStringLiteral("ng-recent"), QStringLiteral("status"));
     QAction *refreshAction = item.contextMenu()->addAction(QIcon::fromTheme(QStringLiteral("view-refresh")), tr2("Check again", "Controlla di nuovo"));
-    QAction *quietAction = item.contextMenu()->addAction(tr2("Show only when something is wrong", "Mostra solo se qualcosa non va"));
-    quietAction->setCheckable(true);
-    quietAction->setChecked(settings.value(QStringLiteral("OnlyProblems"), false).toBool());
+    QAction *optionsAction = item.contextMenu()->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr2("Options…", "Opzioni…"));
+    bool quiet = settings.value(QStringLiteral("OnlyProblems"), false).toBool();
 
     State::Level shown = State::Fine;
     bool first = true;
     const auto refresh = [&] {
         const State state = look();
-        const bool quiet = quietAction->isChecked();
         // (the icon itself changes: the tray draws no overlay on small icons)
         item.setIconByName(state.level == State::Problem ? QStringLiteral("data-error") : state.level == State::Limited ? QStringLiteral("data-warning") : QStringLiteral("document-open-recent"));
         item.setToolTip(QStringLiteral("document-open-recent"), state.headline, state.lines.join(QStringLiteral("<br/>")));
@@ -127,9 +137,65 @@ int main(int argc, char **argv)
         first = false;
     };
     QObject::connect(refreshAction, &QAction::triggered, &app, refresh);
-    QObject::connect(quietAction, &QAction::toggled, &app, [&](bool on) {
-        settings.setValue(QStringLiteral("OnlyProblems"), on);
-        refresh();
+    // Options: a small window (one at a time), not entries of the menu, where a slip of the pointer hides the icon
+    QPointer<QDialog> options;
+    QObject::connect(optionsAction, &QAction::triggered, &app, [&] {
+        if (options) {
+            options->raise();
+            options->activateWindow();
+            return;
+        }
+        options = new QDialog;
+        options->setAttribute(Qt::WA_DeleteOnClose);
+        options->setWindowTitle(tr2("Recent files: options", "File recenti: opzioni"));
+        options->setWindowIcon(QIcon::fromTheme(QStringLiteral("document-open-recent")));
+        auto *layout = new QVBoxLayout(options);
+        const State state = look();
+        auto *headline = new QLabel(QStringLiteral("<b>") + state.headline.toHtmlEscaped() + QStringLiteral("</b>"));
+        auto *details = new QLabel(state.lines.join(QLatin1Char('\n')));
+        details->setWordWrap(true);
+        details->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(headline);
+        layout->addWidget(details);
+        layout->addSpacing(8);
+        auto *onlyProblems = new QCheckBox(tr2("Show the icon only when something is wrong", "Mostra l'icona solo se qualcosa non va"));
+        onlyProblems->setChecked(quiet);
+        layout->addWidget(onlyProblems);
+        // what the file change service leaves out for this user: a text file, opened in the editor
+        auto *exclusions = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")), tr2("Files and folders to leave out…", "File e cartelle da escludere…"));
+        layout->addWidget(exclusions, 0, Qt::AlignLeft);
+        auto *hint = new QLabel(tr2("One per line: a name with * (\"*.iso\") or a folder of the home (\"KVM/\"). Read again as soon as it is saved.",
+                                    "Uno per riga: un nome con * (\"*.iso\") o una cartella della home (\"KVM/\"). Riletto appena viene salvato."));
+        hint->setWordWrap(true);
+        hint->setEnabled(false);
+        layout->addWidget(hint);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        layout->addWidget(buttons);
+        QObject::connect(exclusions, &QPushButton::clicked, options, [] {
+            const QString folder = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/ng-fsevents");
+            QFile file(folder + QStringLiteral("/exclude"));
+            if (!file.exists() && QDir().mkpath(folder) && file.open(QIODevice::WriteOnly)) {
+                file.write(tr2("# What the file change service (ng-fsevents) leaves out, one entry per line.\n"
+                               "# Hidden folders and the disks of virtual machines are left out already.\n#\n"
+                               "# A file name, with * and ?:        *.iso\n"
+                               "# A folder of the home:             KVM/\n",
+                               "# Cosa il servizio delle modifiche ai file (ng-fsevents) esclude, una voce per riga.\n"
+                               "# Le cartelle nascoste e i dischi delle macchine virtuali sono già esclusi.\n#\n"
+                               "# Un nome di file, con * e ?:       *.iso\n"
+                               "# Una cartella della home:          KVM/\n")
+                               .toUtf8());
+                file.close();
+            }
+            QDesktopServices::openUrl(QUrl::fromLocalFile(file.fileName()));
+        });
+        QObject::connect(buttons, &QDialogButtonBox::rejected, options, &QDialog::reject);
+        QObject::connect(buttons, &QDialogButtonBox::accepted, options, [&, onlyProblems] {
+            quiet = onlyProblems->isChecked();
+            settings.setValue(QStringLiteral("OnlyProblems"), quiet);
+            options->accept();
+            refresh();
+        });
+        options->show();
     });
     // a click: the state said in a notification (there is no window to show)
     QObject::connect(&item, &KStatusNotifierItem::activateRequested, &app, [&] {
@@ -147,5 +213,8 @@ int main(int argc, char **argv)
     QObject::connect(&timer, &QTimer::timeout, &app, refresh);
     timer.start(5 * 60 * 1000);
     refresh();
+    if (app.arguments().contains(QStringLiteral("--options"))) {
+        QTimer::singleShot(0, optionsAction, &QAction::trigger); // (the options at once: for a settings page to call)
+    }
     return app.exec();
 }

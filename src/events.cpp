@@ -72,6 +72,7 @@ struct Application {
     QString name;
     bool browser = false;
     bool hidden = false; // not shown in the menus
+    QString tool; // no application: the bare name of the program
 };
 struct Applications {
     QHash<QString, Application> byId;
@@ -158,8 +159,10 @@ struct Applications {
         if (program.isEmpty() || nobody.contains(program)) {
             return {};
         }
+        // (a program that is no application of the desktop, a compiler or a tool: its name is kept apart, for the
+        // one line of a bulk change; "modified with cc1plus" under a file tells nobody anything)
         const auto it = byProgram.constFind(program);
-        return it != byProgram.cend() ? *it : Application{program, false, false}; // (no entry: the program's own name)
+        return it != byProgram.cend() ? *it : Application{QString(), false, false, program};
     }
 };
 
@@ -350,6 +353,9 @@ struct Collector {
             if (kinds & 16) {
                 event.kind = ManyChanged;
                 event.detail = QString::number(count);
+                if (event.by.isEmpty()) {
+                    event.by = app.tool;
+                }
             } else if (kinds & 1) {
                 // a new file made by a browser is a download (where from, when the browser wrote it on the file)
                 event.kind = app.browser && !event.folder ? Downloaded : Created;

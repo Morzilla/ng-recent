@@ -547,6 +547,12 @@ Listing listing(int days, int limit, int groupFrom)
             grouped.insert(it.key(), *it);
         }
     }
+    // the operations the user asked not to see again (a view's "Hide this operation"): ~/.config/ng-recent/list.conf
+    QSet<quint64> hidden;
+    const QStringList hiddenIds = QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("HiddenOperations")).toStringList();
+    for (const QString &id : hiddenIds) {
+        hidden.insert(id.toULongLong());
+    }
     for (const Event &event : std::as_const(collector.newest)) {
         quint64 operation = grouped.contains(event.operation) ? event.operation : 0;
         if (operation == 0 && event.operation == 0) {
@@ -569,6 +575,10 @@ Listing listing(int days, int limit, int groupFrom)
     for (auto it = grouped.cbegin(); it != grouped.cend(); ++it) {
         if (!result.members.contains(it.key())) {
             continue; // (every file of it was changed again since, or is gone: nothing to open it on)
+        }
+        if (hidden.contains(it.key())) {
+            result.members.remove(it.key()); // (with its files)
+            continue;
         }
         // One line when the files belong together: all in one folder, or in a folder the operation itself made
         // (an archive unpacked, a folder copied), or so many that nothing else can be meant (a synchronisation).

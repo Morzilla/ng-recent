@@ -493,7 +493,7 @@ QString applicationOf(qint64 pid)
     return desktopApplications().find(id, program).name;
 }
 
-static void collect(Collector &collector, int days)
+static void collect(Collector &collector, int days, bool withOpened = false)
 {
     collector.since = QDateTime::currentMSecsSinceEpoch() - qint64(days) * 86400000;
     QSet<QString> roots;
@@ -512,7 +512,7 @@ static void collect(Collector &collector, int days)
     collector.service();
     // (what was only opened is left out unless asked for: the list is about what was made and what changed, and
     // every picture looked at would be a line. ~/.config/ng-recent/list.conf, ShowOpened=true)
-    collector.showOpened = QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("ShowOpened"), false).toBool();
+    collector.showOpened = withOpened || QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("ShowOpened"), false).toBool();
     if (collector.showOpened) {
         collector.opened();
     }
@@ -535,10 +535,10 @@ QList<Event> events(int days, int limit)
     return all.mid(0, limit);
 }
 
-Listing listing(int days, int limit, int groupFrom)
+Listing listing(int days, int limit, int groupFrom, bool withOpened)
 {
     Collector collector;
-    collect(collector, days);
+    collect(collector, days, withOpened);
     Listing result;
     // the operations worth one line: of several files
     QHash<quint64, Operation> grouped;

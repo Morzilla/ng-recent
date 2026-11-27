@@ -9,6 +9,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QUrlQuery>
 #include <QMimeDatabase>
 #include <QUrl>
 
@@ -38,7 +39,9 @@ public:
         if (!url.path().isEmpty() && url.path() != QLatin1String("/") && operation == 0 && !automatic) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }
-        const NgRecent::Listing listing = NgRecent::listing();
+        // ("?opened=1": with what was only opened, whatever the setting; a view's "Opened" filter asks so)
+        const bool withOpened = QUrlQuery(url).queryItemValue(QStringLiteral("opened")) == QLatin1String("1");
+        const NgRecent::Listing listing = NgRecent::listing(14, 300, 4, withOpened);
         if (operation != 0 && !listing.members.contains(operation)) {
             return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toDisplayString());
         }

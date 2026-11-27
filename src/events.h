@@ -47,7 +47,7 @@ struct Listing {
     QList<Event> top; // the latest first
     QHash<quint64, QList<Event>> members; // operation -> its files, the latest first
 };
-Listing listing(int days = 14, int limit = 300, int groupFrom = 4);
+Listing listing(int days = 14, int limit = 300, int groupFrom = 4, bool withOpened = false);
 
 /** what the list says under a name: "Downloaded from kde.org", "Convert to MP4, from talk.mkv" */
 QString describe(const Event &event);

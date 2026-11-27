@@ -1,0 +1,22 @@
+Source: ng-recent
+Section: kde
+Priority: optional
+Maintainer: Morzilla <3956663+Morzilla@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake,
+               extra-cmake-modules,
+               libkf6kio-dev,
+               qt6-base-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/Morzilla/ng-recent
+Rules-Requires-Root: no
+
+Package: ng-recent
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: what happened lately to files and folders, for KDE file views
+ KDE's "Recent Files" only knows the files an application opened. ng-recent
+ lists what happened lately to the files and folders of the user: created,
+ added, modified, downloaded, made by a quick action of Dolphin NG, opened.
+ It is a KIO worker (ngrecent:/) that needs nothing running. Dolphin NG and
+ Dialog NG show it in place of "Recent Files" when it is installed.

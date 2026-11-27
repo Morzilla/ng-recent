@@ -1,6 +1,6 @@
 # ng-recent
 
-**Status: a first version, not packaged yet.**
+**Status: a first version.**
 
 What happened lately to your files and folders, as a list any KDE file view can show: `ngrecent:/`.
 

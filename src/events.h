@@ -32,6 +32,7 @@ struct Event {
     quint64 operation = 0; // what it was part of (ng-fsevents); for ManyChanged: the operation itself
     int count = 0; // ManyChanged: how many files
     int made = 0; // ManyChanged: 1 new files, 2 files moved or copied there, 0 files modified
+    bool automatic = false; // done by something that works on its own (a synchronisation, an updater), says ng-fsevents
 };
 
 /** the newest event of each file and folder, the latest first; \a days back, at most \a limit */

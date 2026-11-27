@@ -139,6 +139,9 @@ private:
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 8, QString::number(int(event.kind)));
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 9, event.path);
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 10, QString::number(event.count));
+            if (event.automatic) {
+                entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 11, QStringLiteral("automatic"));
+            }
             return true;
         }
         struct stat info;
@@ -170,6 +173,9 @@ private:
         entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 8, QString::number(int(event.kind)));
         if (!event.source.isEmpty()) {
             entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 9, event.source);
+        }
+        if (event.automatic) {
+            entry->fastInsert(KIO::UDSEntry::UDS_EXTRA + 11, QStringLiteral("automatic")); // (done by something that works on its own)
         }
         return true;
     }

@@ -184,6 +184,7 @@ struct Operation {
     int count = 0;
     uint kinds = 0;
     QString by;
+    QString tool; // the bare name of the program, when it is no application
 };
 
 struct Collector {
@@ -384,6 +385,10 @@ struct Collector {
             event.folder = info.isDir();
             event.by = app.name;
             event.operation = operation;
+            event.automatic = kinds & 32;
+            if (event.automatic && event.by.isEmpty()) {
+                event.by = app.tool; // (what works on its own is named, application or not: "onedrive")
+            }
             if (kinds & 1) {
                 // a new file made by a browser is a download (where from, when the browser wrote it on the file)
                 event.kind = app.browser && !event.folder ? Downloaded : Created;
@@ -421,7 +426,7 @@ struct Collector {
             all >> id >> folder >> first >> last >> count >> kinds >> program >> application;
             all.endStructure();
             const Application app = applications.find(application, program);
-            operations.insert(id, {folder, first, last, int(count), kinds, app.name.isEmpty() ? app.tool : app.name});
+            operations.insert(id, {folder, first, last, int(count), kinds, app.name.isEmpty() ? app.tool : app.name, app.tool});
         }
         all.endArray();
     }
@@ -579,7 +584,8 @@ Listing listing(int days, int limit, int groupFrom)
                 folders.insert(member.path.left(member.path.lastIndexOf(QLatin1Char('/'))));
             }
         }
-        if (folders.size() > 1 && !madeTheFolder && it->count < 20) {
+        // (what works on its own is one line from the start: nobody did those files one by one)
+        if (folders.size() > 1 && !madeTheFolder && it->count < 20 && !(it->kinds & 32)) {
             result.top += result.members.take(it.key());
             continue;
         }
@@ -592,6 +598,7 @@ Listing listing(int days, int limit, int groupFrom)
         group.count = it->count;
         group.made = (it->kinds & 1) ? 1 : (it->kinds & 4) ? 2 : 0;
         group.by = it->by;
+        group.automatic = it->kinds & 32;
         group.detail = QString::number(it->count);
         result.top.append(group);
         latestFirst(result.members[it.key()]);
@@ -604,10 +611,13 @@ Listing listing(int days, int limit, int groupFrom)
 QString describe(const Event &event)
 {
     const QString from = event.source.isEmpty() ? QString() : QFileInfo(event.source).fileName();
-    const QString with = event.by.isEmpty() ? QString() : tr2(" with ", " con ") + event.by;
+    // (done on its own: "by" the program, and said so; done by hand: "with" the application)
+    const QString with = event.by.isEmpty() ? (event.automatic ? tr2(", automatic", ", automatico") : QString())
+        : event.automatic ? tr2(", automatic (", ", automatico (") + event.by + QLatin1Char(')') : tr2(" with ", " con ") + event.by;
     switch (event.kind) {
     case Created:
-        return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo")) + (event.by.isEmpty() ? QString() : tr2(", made with ", ", creato con ") + event.by);
+        return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo"))
+            + (event.automatic ? with : event.by.isEmpty() ? QString() : tr2(", made with ", ", creato con ") + event.by);
     case Added:
         return (from.isEmpty() ? tr2("Added", "Aggiunto") : tr2("Added, from ", "Aggiunto, da ") + from) + with;
     case Modified:

@@ -72,6 +72,7 @@ struct Application {
     QString name;
     bool browser = false;
     bool hidden = false; // not shown in the menus
+    bool own = false; // the entry named after the program
     QString tool; // no application: the bare name of the program
 };
 struct Applications {
@@ -125,10 +126,13 @@ struct Applications {
                         continue;
                     }
                     const QString program = word.section(QLatin1Char('/'), -1);
-                    // (several entries may start one program: one that is shown in the menus is preferred)
+                    // (several entries may start one program: the program's own entry is preferred, "org.kde.ark" for
+                    // "ark", then one that is shown in the menus; "Quick Extract" also starts ark)
                     application.hidden = keys.value(QStringLiteral("NoDisplay")) == QLatin1String("true");
+                    application.own = id == program.toLower() || id.endsWith(QLatin1Char('.') + program.toLower());
                     const auto known = byProgram.constFind(program);
-                    if (!program.isEmpty() && !program.startsWith(QLatin1Char('%')) && (known == byProgram.cend() || (known->hidden && !application.hidden))) {
+                    const bool better = known == byProgram.cend() || (application.own && !known->own) || (!known->own && known->hidden && !application.hidden);
+                    if (!program.isEmpty() && !program.startsWith(QLatin1Char('%')) && better) {
                         byProgram.insert(program, application);
                     }
                     break;
@@ -162,7 +166,7 @@ struct Applications {
         // (a program that is no application of the desktop, a compiler or a tool: its name is kept apart, for the
         // one line of a bulk change; "modified with cc1plus" under a file tells nobody anything)
         const auto it = byProgram.constFind(program);
-        return it != byProgram.cend() ? *it : Application{QString(), false, false, program};
+        return it != byProgram.cend() ? *it : Application{QString(), false, false, false, program};
     }
 };
 

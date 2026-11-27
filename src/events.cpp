@@ -11,7 +11,9 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QLocale>
+#include <QRegularExpression>
 #include <QSet>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QXmlStreamReader>
@@ -38,7 +40,7 @@ QString journalPath()
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/ng-recent/journal.tsv");
 }
 
-void note(const QString &path, Kind kind, const QString &detail, const QString &source)
+bool note(const QString &path, Kind kind, const QString &detail, const QString &source, const QString &by)
 {
     const QString file = journalPath();
     QDir().mkpath(QFileInfo(file).absolutePath());
@@ -54,13 +56,14 @@ void note(const QString &path, Kind kind, const QString &detail, const QString &
         }
     }
     if (!journal.open(QIODevice::WriteOnly | QIODevice::Append)) {
-        return;
+        return false;
     }
     auto clean = [](QString text) {
         return text.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
     };
-    const QStringList fields{QString::number(QDateTime::currentMSecsSinceEpoch()), QString::number(int(kind)), clean(path), clean(detail), clean(source)};
-    journal.write(fields.join(QLatin1Char('\t')).toUtf8() + '\n');
+    const QStringList fields{QString::number(QDateTime::currentMSecsSinceEpoch()), QString::number(int(kind)), clean(path), clean(detail), clean(source), clean(by)};
+    const QByteArray line = fields.join(QLatin1Char('\t')).toUtf8() + '\n';
+    return journal.write(line) == line.size() && journal.flush();
 }
 
 namespace
@@ -71,6 +74,8 @@ struct Application {
     QString name;
     bool browser = false;
     bool hidden = false; // not shown in the menus
+    bool own = false; // the entry named after the program
+    QString tool; // no application: the bare name of the program
 };
 struct Applications {
     QHash<QString, Application> byId;
@@ -123,10 +128,13 @@ struct Applications {
                         continue;
                     }
                     const QString program = word.section(QLatin1Char('/'), -1);
-                    // (several entries may start one program: one that is shown in the menus is preferred)
+                    // (several entries may start one program: the program's own entry is preferred, "org.kde.ark" for
+                    // "ark", then one that is shown in the menus; "Quick Extract" also starts ark)
                     application.hidden = keys.value(QStringLiteral("NoDisplay")) == QLatin1String("true");
+                    application.own = id == program.toLower() || id.endsWith(QLatin1Char('.') + program.toLower());
                     const auto known = byProgram.constFind(program);
-                    if (!program.isEmpty() && !program.startsWith(QLatin1Char('%')) && (known == byProgram.cend() || (known->hidden && !application.hidden))) {
+                    const bool better = known == byProgram.cend() || (application.own && !known->own) || (!known->own && known->hidden && !application.hidden);
+                    if (!program.isEmpty() && !program.startsWith(QLatin1Char('%')) && better) {
                         byProgram.insert(program, application);
                     }
                     break;
@@ -157,14 +165,34 @@ struct Applications {
         if (program.isEmpty() || nobody.contains(program)) {
             return {};
         }
+        // (a program that is no application of the desktop, a compiler or a tool: its name is kept apart, for the
+        // one line of a bulk change; "modified with cc1plus" under a file tells nobody anything)
         const auto it = byProgram.constFind(program);
-        return it != byProgram.cend() ? *it : Application{program, false, false}; // (no entry: the program's own name)
+        return it != byProgram.cend() ? *it : Application{QString(), false, false, false, program};
     }
+};
+
+const Applications &desktopApplications()
+{
+    static const Applications applications;
+    return applications;
+}
+
+struct Operation {
+    QString folder;
+    qint64 first = 0;
+    qint64 last = 0;
+    int count = 0;
+    uint kinds = 0;
+    QString by;
+    QString tool; // the bare name of the program, when it is no application
 };
 
 struct Collector {
     qint64 since = 0;
     QHash<QString, Event> newest;
+    QHash<quint64, Operation> operations;
+    bool showOpened = false;
 
     void add(const Event &event)
     {
@@ -184,11 +212,24 @@ struct Collector {
         // (two sources about one moment: who did it, and where a download came from, are kept from either)
         const bool together = qAbs(event.when - it->when) < 180000;
         const Event before = *it;
+        // what the service knows of the same moment stays with the line that is kept, whichever it is: who did it,
+        // whether it was done on its own, which operation it was part of. Only of the same moment: a note made a
+        // day later is not part of that operation
+        const auto keep = [together](Event &kept, const Event &other) {
+            if (!together) {
+                return;
+            }
+            if (kept.by.isEmpty()) {
+                kept.by = other.by;
+            }
+            if (kept.operation == 0) {
+                kept.operation = other.operation;
+            }
+            kept.automatic = kept.automatic || other.automatic;
+        };
         if (event.when >= it->when) {
             if (plain && (told || it->kind == Created) && together) {
-                if (it->by.isEmpty()) {
-                    it->by = event.by;
-                }
+                keep(*it, event);
                 return;
             }
             *it = event;
@@ -200,18 +241,12 @@ struct Collector {
             *it = event;
             it->when = when;
         } else {
-            if (together && it->by.isEmpty()) {
-                it->by = event.by;
-            }
+            keep(*it, event);
             return;
         }
-        if (together) {
-            if (it->by.isEmpty()) {
-                it->by = before.by;
-            }
-            if (it->kind == before.kind && it->detail.isEmpty()) {
-                it->detail = before.detail;
-            }
+        keep(*it, before);
+        if (together && it->kind == before.kind && it->detail.isEmpty()) {
+            it->detail = before.detail;
         }
     }
 
@@ -318,20 +353,30 @@ struct Collector {
             return; // (not installed, or not running: the list is made without it)
         }
         const QDBusArgument list = reply.arguments().constFirst().value<QDBusArgument>();
-        if (list.currentType() != QDBusArgument::ArrayType) {
+        // (the last field was a count in the service's first version, and is the operation now)
+        const bool withOperations = reply.signature() == QLatin1String("a(sxusst)");
+        if (list.currentType() != QDBusArgument::ArrayType || (!withOperations && reply.signature() != QLatin1String("a(sxussu)"))) {
             return;
         }
-        static const Applications applications;
+        const Applications &applications = desktopApplications();
         list.beginArray();
         while (!list.atEnd()) {
             QString path, program, application;
             qlonglong when = 0;
             uint kinds = 0, count = 0;
+            qulonglong operation = 0;
             list.beginStructure();
-            list >> path >> when >> kinds >> program >> application >> count;
+            list >> path >> when >> kinds >> program >> application;
+            if (withOperations) {
+                list >> operation;
+            } else {
+                list >> count;
+            }
             list.endStructure();
             const QFileInfo info(path);
-            if (!info.exists()) {
+            // (a folder standing for many files: the service's first version says it so, and that line is kept;
+            // the later ones give the operations apart, below)
+            if (!info.exists() || ((kinds & 16) && withOperations)) {
                 continue;
             }
             const Application app = applications.find(application, program);
@@ -340,9 +385,18 @@ struct Collector {
             event.when = when;
             event.folder = info.isDir();
             event.by = app.name;
+            event.operation = operation;
+            event.automatic = kinds & 32;
+            if (event.automatic && event.by.isEmpty()) {
+                event.by = app.tool; // (what works on its own is named, application or not: "onedrive")
+            }
             if (kinds & 16) {
                 event.kind = ManyChanged;
+                event.count = int(count);
                 event.detail = QString::number(count);
+                if (event.by.isEmpty()) {
+                    event.by = app.tool;
+                }
             } else if (kinds & 1) {
                 // a new file made by a browser is a download (where from, when the browser wrote it on the file)
                 event.kind = app.browser && !event.folder ? Downloaded : Created;
@@ -358,6 +412,31 @@ struct Collector {
             add(event);
         }
         list.endArray();
+        if (!withOperations) {
+            return;
+        }
+        // the things done in one go: (id, folder, first, last, how many files, kinds, program, application)
+        QDBusMessage ask = QDBusMessage::createMethodCall(QStringLiteral("org.ng.FsEvents1"), QStringLiteral("/org/ng/FsEvents1"), QStringLiteral("org.ng.FsEvents1"),
+                                                          QStringLiteral("Operations"));
+        ask << qlonglong(since) << uint(2) << uint(2000);
+        const QDBusMessage answer = QDBusConnection::systemBus().call(ask, QDBus::Block, 800);
+        if (answer.type() != QDBusMessage::ReplyMessage || answer.signature() != QLatin1String("a(tsxxuuss)")) {
+            return;
+        }
+        const QDBusArgument all = answer.arguments().constFirst().value<QDBusArgument>();
+        all.beginArray();
+        while (!all.atEnd()) {
+            qulonglong id = 0;
+            qlonglong first = 0, last = 0;
+            uint count = 0, kinds = 0;
+            QString folder, program, application;
+            all.beginStructure();
+            all >> id >> folder >> first >> last >> count >> kinds >> program >> application;
+            all.endStructure();
+            const Application app = applications.find(application, program);
+            operations.insert(id, {folder, first, last, int(count), kinds, app.name.isEmpty() ? app.tool : app.name, app.tool});
+        }
+        all.endArray();
     }
 
     // what programs wrote down themselves: time, kind, path, detail, source
@@ -383,17 +462,47 @@ struct Collector {
             event.kind = Kind(kind);
             event.path = info.absoluteFilePath();
             event.folder = info.isDir();
+            if (event.kind == Opened && !showOpened) {
+                continue;
+            }
             event.detail = f.value(3);
             event.source = f.value(4);
+            event.by = f.value(5);
             add(event);
         }
     }
 };
 }
 
-QList<Event> events(int days, int limit)
+QString applicationOf(qint64 pid)
 {
-    Collector collector;
+    // the program: the first argument the process was started with, without its folder
+    QString program;
+    QFile cmdline(QStringLiteral("/proc/%1/cmdline").arg(pid));
+    if (cmdline.open(QIODevice::ReadOnly)) {
+        QByteArray first = cmdline.read(4096);
+        first.truncate(qMax<qsizetype>(0, first.indexOf('\0')));
+        program = QFile::decodeName(first).section(QLatin1Char(' '), 0, 0).section(QLatin1Char('/'), -1);
+    }
+    // the application: from the name of its systemd scope or service (app-org.kde.kate-1a2b.scope,
+    // app-org.kde.kate@1a2b.service, app-flatpak-org.gimp.GIMP-123.scope, snap.firefox.firefox-<uuid>.scope)
+    QString id;
+    QFile cgroup(QStringLiteral("/proc/%1/cgroup").arg(pid));
+    if (cgroup.open(QIODevice::ReadOnly)) {
+        const QString unit = QString::fromUtf8(cgroup.read(4096)).trimmed().section(QLatin1Char('/'), -1);
+        static const QRegularExpression app(QStringLiteral("^app-(?:flatpak-|gnome-)?(.+?)(?:-[0-9a-f]+|@[^.]*)?\\.(?:scope|service)$"));
+        static const QRegularExpression snap(QStringLiteral("^snap\\.([^.]+)\\."));
+        if (const auto match = app.match(unit); match.hasMatch()) {
+            id = match.captured(1);
+        } else if (const auto snapMatch = snap.match(unit); snapMatch.hasMatch()) {
+            id = snapMatch.captured(1);
+        }
+    }
+    return desktopApplications().find(id, program).name;
+}
+
+static void collect(Collector &collector, int days, bool withOpened = false)
+{
     collector.since = QDateTime::currentMSecsSinceEpoch() - qint64(days) * 86400000;
     QSet<QString> roots;
     for (const QStandardPaths::StandardLocation place : {QStandardPaths::DownloadLocation, QStandardPaths::DesktopLocation, QStandardPaths::DocumentsLocation,
@@ -409,22 +518,135 @@ QList<Event> events(int days, int limit)
     }
     collector.scan(QDir::homePath(), 1, &budget); // (the home itself: its own files and new folders, not what is in them)
     collector.service();
-    collector.opened();
+    // (what was only opened is left out unless asked for: the list is about what was made and what changed, and
+    // every picture looked at would be a line. ~/.config/ng-recent/list.conf, ShowOpened=true)
+    collector.showOpened = withOpened || QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("ShowOpened"), false).toBool();
+    if (collector.showOpened) {
+        collector.opened();
+    }
     collector.journal();
-    QList<Event> all = collector.newest.values();
-    std::sort(all.begin(), all.end(), [](const Event &a, const Event &b) {
+}
+
+static void latestFirst(QList<Event> &list)
+{
+    std::sort(list.begin(), list.end(), [](const Event &a, const Event &b) {
         return a.when > b.when;
     });
+}
+
+QList<Event> events(int days, int limit)
+{
+    Collector collector;
+    collect(collector, days);
+    QList<Event> all = collector.newest.values();
+    latestFirst(all);
     return all.mid(0, limit);
+}
+
+Listing listing(int days, int limit, int groupFrom, bool withOpened)
+{
+    Collector collector;
+    collect(collector, days, withOpened);
+    Listing result;
+    // the operations worth one line: of several files
+    QHash<quint64, Operation> grouped;
+    for (auto it = collector.operations.cbegin(); it != collector.operations.cend(); ++it) {
+        if (it->count >= groupFrom && QFileInfo(it->folder).isDir()) {
+            grouped.insert(it.key(), *it);
+        }
+    }
+    // the operations the user asked not to see again (a view's "Hide this operation"): ~/.config/ng-recent/list.conf
+    QSet<quint64> hidden;
+    const QStringList hiddenIds = QSettings(QStringLiteral("ng-recent"), QStringLiteral("list")).value(QStringLiteral("HiddenOperations")).toStringList();
+    for (const QString &id : hiddenIds) {
+        hidden.insert(id.toULongLong());
+    }
+    for (const Event &event : std::as_const(collector.newest)) {
+        quint64 operation = grouped.contains(event.operation) ? event.operation : 0;
+        if (operation == 0 && event.operation == 0) {
+            // known from the dates only (the service keeps the first files of a long operation, or was not asked
+            // about this one): part of an operation when it lies in its folder and changed while it went on
+            for (auto it = grouped.cbegin(); it != grouped.cend(); ++it) {
+                const bool inside = event.path.startsWith(it->folder + QLatin1Char('/')) || event.path == it->folder;
+                if (inside && event.when >= it->first - 2000 && event.when <= it->last + 2000 && (event.kind == Created || event.kind == Modified || event.kind == Added)) {
+                    operation = it.key();
+                    break;
+                }
+            }
+        }
+        if (operation != 0) {
+            result.members[operation].append(event);
+        } else {
+            result.top.append(event);
+        }
+    }
+    for (auto it = grouped.cbegin(); it != grouped.cend(); ++it) {
+        if (!result.members.contains(it.key())) {
+            continue; // (every file of it was changed again since, or is gone: nothing to open it on)
+        }
+        if (hidden.contains(it.key())) {
+            result.members.remove(it.key()); // (with its files)
+            continue;
+        }
+        // One line when the files belong together: all in one folder, or in a folder the operation itself made
+        // (an archive unpacked, a folder copied), or so many that nothing else can be meant (a synchronisation).
+        // A few files changed at the same time in different folders have only the moment in common: they stay
+        // lines of their own
+        const QList<Event> members = result.members.value(it.key());
+        QSet<QString> folders;
+        bool madeTheFolder = false;
+        for (const Event &member : members) {
+            if (member.folder) {
+                madeTheFolder |= member.path == it->folder && member.kind == Created;
+            } else {
+                folders.insert(member.path.left(member.path.lastIndexOf(QLatin1Char('/'))));
+            }
+        }
+        // (what works on its own is one line from the start: nobody did those files one by one)
+        if (folders.size() > 1 && !madeTheFolder && it->count < 20 && !(it->kinds & 32)) {
+            result.top += result.members.take(it.key());
+            continue;
+        }
+        Event group;
+        group.kind = ManyChanged;
+        group.path = it->folder;
+        group.folder = true;
+        group.when = it->last;
+        group.operation = it.key();
+        group.count = it->count;
+        group.made = (it->kinds & 1) ? 1 : (it->kinds & 4) ? 2 : 0;
+        group.by = it->by;
+        group.automatic = it->kinds & 32;
+        group.detail = QString::number(it->count);
+        result.top.append(group);
+        latestFirst(result.members[it.key()]);
+    }
+    // at most that many of what the user did and as many of what was done on its own: the two are lists apart,
+    // and a busy synchronisation is not to push everything else out
+    latestFirst(result.top);
+    QList<Event> kept;
+    int byHand = 0, onItsOwn = 0;
+    for (const Event &event : std::as_const(result.top)) {
+        int &count = event.automatic ? onItsOwn : byHand;
+        if (count < limit) {
+            ++count;
+            kept.append(event);
+        }
+    }
+    result.top = kept;
+    return result;
 }
 
 QString describe(const Event &event)
 {
     const QString from = event.source.isEmpty() ? QString() : QFileInfo(event.source).fileName();
-    const QString with = event.by.isEmpty() ? QString() : tr2(" with ", " con ") + event.by;
+    // (done on its own: "by" the program, and said so; done by hand: "with" the application)
+    const QString with = event.by.isEmpty() ? (event.automatic ? tr2(", automatic", ", automatico") : QString())
+        : event.automatic ? QString(tr2(", automatic (", ", automatico (") + event.by + QLatin1Char(')')) : QString(tr2(" with ", " con ") + event.by);
     switch (event.kind) {
     case Created:
-        return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo")) + (event.by.isEmpty() ? QString() : tr2(", made with ", ", creato con ") + event.by);
+        return (event.folder ? tr2("New folder", "Nuova cartella") : tr2("New", "Nuovo"))
+            + (event.automatic ? with : event.by.isEmpty() ? QString() : tr2(", made with ", ", creato con ") + event.by);
     case Added:
         return (from.isEmpty() ? tr2("Added", "Aggiunto") : tr2("Added, from ", "Aggiunto, da ") + from) + with;
     case Modified:
@@ -435,8 +657,10 @@ QString describe(const Event &event)
         return (event.detail.isEmpty() ? tr2("Made", "Prodotto") : event.detail) + (from.isEmpty() ? QString() : tr2(", from ", ", da ") + from);
     case Opened:
         return tr2("Opened", "Aperto");
-    case ManyChanged:
-        return event.detail + tr2(" files changed", " file modificati") + with;
+    case ManyChanged: {
+        const QString number = QLocale().toString(event.count > 0 ? event.count : event.detail.toInt());
+        return number + (event.made == 1 ? tr2(" new files", " nuovi file") : event.made == 2 ? tr2(" files added", " file aggiunti") : tr2(" files changed", " file modificati")) + with;
+    }
     }
     return QString();
 }

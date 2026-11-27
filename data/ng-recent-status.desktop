@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Recent files status
+Name[it]=Stato dei file recenti
+Comment=Says in the system tray whether the services behind the list of recent files work
+Comment[it]=Dice nel vassoio di sistema se i servizi dietro la lista dei file recenti funzionano
+Exec=ng-recent-status
+Icon=document-open-recent
+NoDisplay=true
+X-KDE-autostart-phase=2
+OnlyShowIn=KDE;
